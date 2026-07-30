@@ -1,11 +1,23 @@
 import * as THREE from 'three';
-import { FishingBoat } from './FishingBoat.js';
+import { BoatModel } from './BoatModel.js';
 import { PlayerConfig }  from '../config/PlayerConfig.js';
+
+/**
+ * BoatController.js — Physics-based boat controller with realistic water feel.
+ *
+ * Features:
+ *   • Thrust-based forward/reverse movement
+ *   • Speed-dependent steering (boat turns faster at speed)
+ *   • Visual buoyancy bobbing, roll banking on turns, pitch on acceleration
+ *   • Improved boarding/disembark positioning (places character beside boat)
+ *   • InteractionSystem compatible via getBoatGroup()
+ */
 
 const {
   WALK_SPEED, RUN_SPEED, SPRINT_SPEED,
   GRAVITY, ACCELERATION, DECELERATION,
   TURN_SPEED, RAY_ORIGIN_OFFSET, RAY_SNAP_THRESHOLD,
+  BOAT_BOARD_RADIUS,
 } = PlayerConfig;
 
 export class BoatController {
@@ -13,15 +25,22 @@ export class BoatController {
     this.scene     = scene;
     this.colliders = colliders;
 
-    this._boat = new FishingBoat();
+    this._boat = new BoatModel();
     this._boat.addTo(scene);
     this.group = this._boat.root;
 
-    this.position    = new THREE.Vector3(0, 0, 0); // Start on water
+    this.position    = new THREE.Vector3(0, 0, 0);
     this.velocity    = new THREE.Vector3();
     this.yaw         = 0;
     this.isGrounded  = false;
-    
+    this.maxSpeed    = 12.0; // default, will be overwritten by BoatManager
+
+    // Physics visual extras
+    this.currentTurnRate = 0;
+    this.roll = 0;
+    this.pitch = 0;
+    this.time = 0;
+
     // Default animation state
     this.currentStateName = 'Idle';
 
@@ -43,39 +62,82 @@ export class BoatController {
     return this.group.position.clone().add(new THREE.Vector3(0, 1.2, 0));
   }
 
+  /**
+   * Get the boat's root group for InteractionSystem registration.
+   * @returns {THREE.Group}
+   */
+  getBoatGroup() { return this.group; }
+
+  /**
+   * Get a disembark position beside the boat (port side).
+   * @returns {THREE.Vector3}
+   */
+  getDisembarkPosition() {
+    // Place character 3m to the left side of the boat
+    const sideOffset = new THREE.Vector3(-3.0, 1.5, 0);
+    sideOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
+    return this.getPosition().add(sideOffset);
+  }
+
+  /**
+   * Get the cockpit position where the character sits.
+   * @returns {THREE.Vector3}
+   */
+  getCockpitPosition() {
+    const cockpitOffset = new THREE.Vector3(0, 1.8, -1.5);
+    cockpitOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
+    return new THREE.Vector3(
+      this.position.x + cockpitOffset.x,
+      this.position.y + cockpitOffset.y,
+      this.position.z + cockpitOffset.z
+    );
+  }
+
   get speed() {
     return Math.sqrt(this.velocity.x ** 2 + this.velocity.z ** 2);
   }
 
   fixedUpdate(input, camCtrl, dt) {
-    const camForward = camCtrl.getCameraForward();
-    const camRight   = camCtrl.getCameraRight();
+    const hasInput = input.keys.forward || input.keys.backward || input.keys.left || input.keys.right;
 
-    this._inputDir.set(0, 0, 0);
-    if (input.keys.forward)  this._inputDir.add(camForward);
-    if (input.keys.backward) this._inputDir.sub(camForward);
-    if (input.keys.right)    this._inputDir.add(camRight);
-    if (input.keys.left)     this._inputDir.sub(camRight);
+    // 1. Calculate thrust intent
+    let throttle = 0;
+    if (input.keys.forward) throttle = 1;
+    if (input.keys.backward) throttle = -0.5;
 
-    const hasInput = this._inputDir.lengthSq() > 0;
-    if (hasInput) this._inputDir.normalize();
+    // 2. Steer (A/D)
+    let steering = 0;
+    if (input.keys.left) steering = 1;
+    if (input.keys.right) steering = -1;
 
-    // Boat speeds (can be tuned later if they need to be faster than character)
-    let targetSpeed = input.keys.sprint ? SPRINT_SPEED * 1.5
-                    : hasInput          ? RUN_SPEED * 1.5
-                    : 0;
+    // Turn speed depends on how fast the boat is going
+    const speedFactor = Math.min(this.speed / 5.0, 1.0) + 0.1;
+    const turnRate = steering * 0.8 * speedFactor * dt;
 
-    if (input.keys.backward && !input.keys.forward) targetSpeed = WALK_SPEED * 1.5;
+    // Reverse steering logic like a real boat
+    const turnDirection = throttle < 0 ? -1 : 1;
+    this.yaw += turnRate * turnDirection;
 
-    this._desiredXZ.set(
-      hasInput ? this._inputDir.x * targetSpeed : 0,
-      0,
-      hasInput ? this._inputDir.z * targetSpeed : 0,
-    );
+    this.currentTurnRate = (turnRate * turnDirection) / dt;
 
-    const rate = hasInput ? ACCELERATION * 0.5 : DECELERATION * 0.5; // Boats accelerate slower
-    this.velocity.x += (this._desiredXZ.x - this.velocity.x) * Math.min(rate * dt, 1);
-    this.velocity.z += (this._desiredXZ.z - this.velocity.z) * Math.min(rate * dt, 1);
+    // Forward vector of the boat
+    const forward = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+
+    // Thrust
+    let targetSpeed = 0;
+    if (throttle > 0) {
+      targetSpeed = input.keys.sprint ? this.maxSpeed * 1.4 : this.maxSpeed;
+    } else if (throttle < 0) {
+      targetSpeed = -this.maxSpeed * 0.5;
+    }
+
+    // Apply thrust along the boat's forward direction
+    const thrustX = forward.x * targetSpeed;
+    const thrustZ = forward.z * targetSpeed;
+
+    const rate = throttle !== 0 ? ACCELERATION * 0.1 : DECELERATION * 0.05;
+    this.velocity.x += (thrustX - this.velocity.x) * Math.min(rate * dt, 1);
+    this.velocity.z += (thrustZ - this.velocity.z) * Math.min(rate * dt, 1);
 
     if (this.isGrounded) {
       this.velocity.y = Math.max(this.velocity.y, 0);
@@ -89,14 +151,6 @@ export class BoatController {
 
     this._detectGround();
 
-    if (hasInput) {
-      const targetYaw = Math.atan2(this._inputDir.x, this._inputDir.z);
-      let diff = targetYaw - this.yaw;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff >  Math.PI) diff -= Math.PI * 2;
-      this.yaw += diff * Math.min(TURN_SPEED * 0.5 * dt, 1); // Boats turn slower
-    }
-
     this.group.position.copy(this.position);
     this.group.rotation.y = this.yaw;
 
@@ -105,6 +159,23 @@ export class BoatController {
 
   renderUpdate(frameDelta, camCtrl) {
     this._boat.update(this.currentStateName, this.speed, frameDelta);
+    this.time += frameDelta;
+
+    // Visual Buoyancy (bobbing)
+    const bobbing = Math.sin(this.time * 2.0) * 0.05;
+    const pitchBob = Math.cos(this.time * 1.5) * 0.03;
+
+    // Banking (roll) based on turn rate and speed
+    const speedFactorVisual = Math.min(this.speed / 5.0, 1.0);
+    const targetRoll = -this.currentTurnRate * 0.1 * speedFactorVisual;
+    this.roll += (targetRoll - this.roll) * frameDelta * 5.0;
+
+    // Engine acceleration pitch
+    const accelPitch = (this.speed > 0.5 && this._inputDir.lengthSq() > 0) ? -0.05 : 0;
+    this.pitch += ((pitchBob + accelPitch) - this.pitch) * frameDelta * 3.0;
+
+    this.group.position.y = this.position.y + (this.isGrounded ? 0 : bobbing);
+    this.group.rotation.set(this.pitch, this.yaw, this.roll, 'YXZ');
   }
 
   _detectGround() {

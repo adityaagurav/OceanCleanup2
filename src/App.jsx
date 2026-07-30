@@ -5,6 +5,8 @@ import Settings    from './ui/Settings';
 import HowToPlay   from './ui/HowToPlay';
 import HUD         from './ui/HUD';
 import GameOver    from './ui/GameOver';
+import Pokedex     from './ui/Pokedex';
+import BuildingUI  from './ui/BuildingUI';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { Engine }  from './engine/Engine.js';
 import { soundFx } from './audio/AudioManager';
@@ -16,11 +18,24 @@ function App() {
 
   const [score,       setScore]       = useState(0);
   const [trashCount,  setTrashCount]  = useState(0);
-  const [timeLeft,    setTimeLeft]    = useState(120);
+  const [fishCount,   setFishCount]   = useState(0);
+  const [gold,        setGold]        = useState(0); // Keeping for treasure backwards compatibility, but also using as money
+  const [energy,      setEnergy]      = useState(100);
+  const [boatLevel,   setBoatLevel]   = useState(1);
   const [boatSpeed,   setBoatSpeed]   = useState(0);
+  const [gameTime,    setGameTime]    = useState({ timeOfDay: 8, day: 1 });
   const [pickupToast, setPickupToast] = useState(false);
   const [nearTrash,   setNearTrash]   = useState(false);
+  const [nearBoat,    setNearBoat]    = useState(false);
+  const [nearTreasure, setNearTreasure] = useState(false);
+  const [activeVehicle, setActiveVehicle] = useState('CHARACTER');
   const [isPaused,    setIsPaused]    = useState(false);
+  const [playerPos,   setPlayerPos]   = useState(null);
+  const [playerYaw,   setPlayerYaw]   = useState(0);
+  const [caughtCreatures, setCaughtCreatures] = useState([]);
+  const [activeCompanion, setActiveCompanion] = useState(null);
+  const [showPokedex, setShowPokedex] = useState(false);
+  const [activeBuilding, setActiveBuilding] = useState(null); // 'HOUSE' | 'PLANT' | null
 
   const containerRef  = useRef(null);
   const engineRef     = useRef(null);
@@ -35,9 +50,30 @@ function App() {
   // ── Start / stop Engine ──────────────────────────────────────────
   useEffect(() => {
     if (scene === 'GAME' && containerRef.current) {
-      setScore(0);
-      setTrashCount(0);
-      setTimeLeft(settings.timeLimit);
+      
+      let savedData = {};
+      try {
+        const stored = localStorage.getItem('ocean_save');
+        if (stored) {
+          savedData = JSON.parse(stored);
+          if (savedData.score !== undefined) setScore(savedData.score);
+          if (savedData.trashCount !== undefined) setTrashCount(savedData.trashCount);
+          if (savedData.fishCount !== undefined) setFishCount(savedData.fishCount);
+          if (savedData.energy !== undefined) setEnergy(savedData.energy);
+          if (savedData.boatLevel !== undefined) setBoatLevel(savedData.boatLevel);
+          if (savedData.gold !== undefined) setGold(savedData.gold);
+        }
+      } catch (e) {
+        console.warn('Failed to load save data:', e);
+      }
+      
+      if (!savedData.score && savedData.score !== 0) {
+        setScore(0);
+        setTrashCount(0);
+        setFishCount(0);
+        setEnergy(100);
+        setBoatLevel(1);
+      }
       setIsPaused(false);
       setNearTrash(false);
 
@@ -52,11 +88,66 @@ function App() {
             if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
             toastTimerRef.current = setTimeout(() => setPickupToast(false), 1200);
           },
+          onFishCollect: (newCount) => {
+            setFishCount(newCount);
+            soundFx.playCollectSound();
+            setPickupToast(true);
+            if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = setTimeout(() => setPickupToast(false), 1200);
+          },
           onNearTrash: (isNear) => setNearTrash(isNear),
-          onTick:      (speed)  => setBoatSpeed(speed),
+          onNearBoat:  (isNear) => setNearBoat(isNear),
+          onNearTreasure: (isNear) => setNearTreasure(isNear),
+          onVehicleChange: (v)  => setActiveVehicle(v),
+          onCollectTreasure: (amount) => {
+            setGold(prev => prev + amount);
+            setPickupToast(`+${amount} Gold!`);
+            if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = setTimeout(() => setPickupToast(false), 2000);
+          },
+          onCatch: (config) => {
+            setCaughtCreatures(prev => [...prev, config]);
+            setPickupToast(`Caught a wild ${config.type.toUpperCase()}!`);
+            if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = setTimeout(() => setPickupToast(false), 2000);
+          },
+          onBoatUpgrade: (config) => {
+            setBoatLevel(config.level);
+            setPickupToast(`Boat Upgraded to Level ${config.level}: ${config.name}!`);
+            if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = setTimeout(() => setPickupToast(false), 4000);
+          },
+          onTick:      (data)  => {
+            setBoatSpeed(data.speed);
+            setGameTime({ timeOfDay: data.timeOfDay, day: data.day });
+            setPlayerPos(data.playerPos);
+            setPlayerYaw(data.playerYaw);
+            
+            // Energy drain: 1 energy every in-game minute roughly, but tied to real time tick
+            setEnergy(prev => {
+              const newEnergy = prev - 0.005; 
+              if (newEnergy <= 0) {
+                // If energy hits 0, maybe penalize score or force sleep
+                // For now, just bottom out at 0
+                return 0;
+              }
+              return newEnergy;
+            });
+          },
+          onInteractHouse: () => {
+            setActiveBuilding('HOUSE');
+            setIsPaused(true);
+          },
+          onInteractPlant: () => {
+            setActiveBuilding('PLANT');
+            setIsPaused(true);
+          }
         },
-        settings
+        { ...settings, initialData: savedData }
       );
+
+      // Keep engine ref synced with current companion
+      if (activeCompanion) engine.setCompanion(activeCompanion);
 
       engineRef.current = engine;
       return () => { engine.destroy(); engineRef.current = null; };
@@ -70,19 +161,23 @@ function App() {
     else          engineRef.current.resume();
   }, [isPaused]);
 
-  // ── Game timer ───────────────────────────────────────────────────
+  // ── Update Companion ─────────────────────────────────────────────
   useEffect(() => {
-    let timer = null;
-    if (scene === 'GAME' && !isPaused) {
-      timer = setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev <= 1) { clearInterval(timer); setScene('GAMEOVER'); return 0; }
-          return prev - 1;
-        });
-      }, 1000);
+    if (engineRef.current) {
+      engineRef.current.setCompanion(activeCompanion);
     }
-    return () => { if (timer) clearInterval(timer); };
-  }, [scene, isPaused]);
+  }, [activeCompanion]);
+
+  // ── Game timer ───────────────────────────────────────────────────
+  // Timer removed per user request
+
+  // ── Save system ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (scene === 'GAME') {
+      const data = { score, trashCount, fishCount, gold, energy, boatLevel, playerPos, playerYaw };
+      localStorage.setItem('ocean_save', JSON.stringify(data));
+    }
+  }, [score, trashCount, fishCount, gold, energy, boatLevel, playerPos, playerYaw, scene]);
 
   // ─────────────────────────────────────────────────────────────────
   return (
@@ -119,15 +214,69 @@ function App() {
           <HUD
             score={score}
             trashCount={trashCount}
-            timeLeft={timeLeft}
+            fishCount={fishCount}
+            money={gold}
+            energy={energy}
             boatSpeed={boatSpeed}
+            boatLevel={boatLevel}
+            gameTime={gameTime}
             pickupToast={pickupToast}
             nearTrash={nearTrash}
+            nearBoat={nearBoat}
+            nearTreasure={nearTreasure}
+            activeVehicle={activeVehicle}
+            playerPos={playerPos}
+            playerYaw={playerYaw}
+            caughtCreatures={caughtCreatures}
+            onOpenPokedex={() => setShowPokedex(true)}
             onPause={() => setIsPaused(true)}
             onQuit={() => setIsPaused(true)}
           />
 
-          {isPaused && (
+          {showPokedex && (
+            <Pokedex 
+              caughtCreatures={caughtCreatures} 
+              activeCompanion={activeCompanion}
+              onSelectCompanion={setActiveCompanion}
+              onClose={() => setShowPokedex(false)} 
+            />
+          )}
+
+          <BuildingUI
+            activeBuilding={activeBuilding}
+            energy={energy}
+            money={gold}
+            trashCount={trashCount}
+            onClose={() => {
+              setActiveBuilding(null);
+              setIsPaused(false);
+            }}
+            onEat={() => {
+              if (gold >= 15 && energy < 100) {
+                setGold(prev => prev - 15);
+                setEnergy(prev => Math.min(100, prev + 50));
+                soundFx.playCollectSound(); // Replace with eat sound later
+              }
+            }}
+            onSleep={() => {
+              if (energy < 100) {
+                setEnergy(100);
+                // We'd ideally advance the time in TimeSystem here, but for now we just restore energy
+                soundFx.playCollectSound(); // Replace with sleep sound later
+                setActiveBuilding(null);
+                setIsPaused(false);
+              }
+            }}
+            onRecycle={() => {
+              if (trashCount > 0) {
+                setGold(prev => prev + trashCount);
+                setTrashCount(0);
+                soundFx.playCollectSound(); // Replace with cash register sound later
+              }
+            }}
+          />
+
+          {isPaused && !activeBuilding && (
             <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6">
               <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl space-y-6">
                 <h2 className="text-3xl font-black text-white">GAME PAUSED</h2>
