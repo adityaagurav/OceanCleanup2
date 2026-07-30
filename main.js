@@ -3,15 +3,16 @@ import './style.css'
 
 import * as THREE from 'three';
 
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import { Water } from 'three/examples/jsm/objects/Water.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 let camera, scene, renderer;
 let controls, water, sun;
 
-const loader = new GLTFLoader();
+const gltfLoader = new GLTFLoader();
+const fbxLoader = new FBXLoader();
 
 function random(min, max) {
   return Math.random() * (max - min) + min;
@@ -19,7 +20,7 @@ function random(min, max) {
 
 class Boat {
   constructor(){
-    loader.load("assets/boat/scene.gltf", (gltf) => {
+    gltfLoader.load("assets/boat/scene.gltf", (gltf) => {
       scene.add( gltf.scene )
       gltf.scene.scale.set(3, 3, 3)
       gltf.scene.position.set(5,13,50)
@@ -65,10 +66,19 @@ class Trash{
 
 async function loadModel(url){
   return new Promise((resolve, reject) => {
-    loader.load(url, (gltf) => {
-      resolve(gltf.scene)
-    })
-  })
+    const ext = url.split('.').pop().toLowerCase();
+    if (ext === 'gltf' || ext === 'glb') {
+      gltfLoader.load(url, (gltf) => {
+        resolve(gltf.scene);
+      }, undefined, reject);
+    } else if (ext === 'fbx') {
+      fbxLoader.load(url, (fbx) => {
+        resolve(fbx);
+      }, undefined, reject);
+    } else {
+      reject(new Error(`Unsupported file extension: ${ext}`));
+    }
+  });
 }
 
 let boatModel = null
@@ -161,12 +171,8 @@ async function init() {
 
   updateSun();
 
-  controls = new OrbitControls( camera, renderer.domElement );
-  controls.maxPolarAngle = Math.PI * 0.495;
-  controls.target.set( 0, 10, 0 );
-  controls.minDistance = 40.0;
-  controls.maxDistance = 200.0;
-  controls.update();
+  controls = new PointerLockControls( camera, document.body );
+  scene.add(controls.getObject());
 
   const waterUniforms = water.material.uniforms;
 
@@ -194,6 +200,11 @@ async function init() {
   window.addEventListener( 'keyup', function(e){
     boat.stop()
   })
+
+  // Lock pointer (hide mouse) on click. Pressing ESC automatically exits this state.
+  renderer.domElement.addEventListener('click', function() {
+    controls.lock();
+  });
 
 }
 

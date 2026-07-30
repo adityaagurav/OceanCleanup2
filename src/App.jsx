@@ -1,39 +1,38 @@
 import React, { useState, useEffect, useRef } from 'react';
-import MainMenu from './scenes/MainMenu';
-import Leaderboard from './scenes/Leaderboard';
-import Settings from './scenes/Settings';
-import HowToPlay from './scenes/HowToPlay';
-import HUD from './scenes/HUD';
-import GameOver from './scenes/GameOver';
-import { OceanGame } from './game/OceanGame';
-import { soundFx } from './utils/sound';
+import MainMenu    from './ui/MainMenu';
+import Leaderboard from './ui/Leaderboard';
+import Settings    from './ui/Settings';
+import HowToPlay   from './ui/HowToPlay';
+import HUD         from './ui/HUD';
+import GameOver    from './ui/GameOver';
+import { DebugOverlay } from './ui/DebugOverlay';
+import { Engine }  from './engine/Engine.js';
+import { soundFx } from './audio/AudioManager';
 
 function App() {
-  const [scene, setScene] = useState('MENU');
+  const [scene, setScene]           = useState('MENU');
   const [soundMuted, setSoundMuted] = useState(false);
-  const [settings, setSettings] = useState({
-    timeLimit: 120,
-    trashDensity: 'normal'
-  });
+  const [settings, setSettings]     = useState({ timeLimit: 120, trashDensity: 'normal' });
 
-  const [score, setScore] = useState(0);
-  const [trashCount, setTrashCount] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(120);
-  const [boatSpeed, setBoatSpeed] = useState(0);
+  const [score,       setScore]       = useState(0);
+  const [trashCount,  setTrashCount]  = useState(0);
+  const [timeLeft,    setTimeLeft]    = useState(120);
+  const [boatSpeed,   setBoatSpeed]   = useState(0);
   const [pickupToast, setPickupToast] = useState(false);
-  const [nearTrash, setNearTrash] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+  const [nearTrash,   setNearTrash]   = useState(false);
+  const [isPaused,    setIsPaused]    = useState(false);
 
-  const containerRef = useRef(null);
-  const gameRef = useRef(null);
+  const containerRef  = useRef(null);
+  const engineRef     = useRef(null);
   const toastTimerRef = useRef(null);
 
   const handleToggleSound = () => {
-    const nextMuted = !soundMuted;
-    setSoundMuted(nextMuted);
-    soundFx.setMuted(nextMuted);
+    const next = !soundMuted;
+    setSoundMuted(next);
+    soundFx.setMuted(next);
   };
 
+  // ── Start / stop Engine ──────────────────────────────────────────
   useEffect(() => {
     if (scene === 'GAME' && containerRef.current) {
       setScore(0);
@@ -42,73 +41,66 @@ function App() {
       setIsPaused(false);
       setNearTrash(false);
 
-      const game = new OceanGame(
+      const engine = new Engine(
         containerRef.current,
         {
           onCollect: (newScore, newCount) => {
             setScore(newScore);
             setTrashCount(newCount);
             soundFx.playCollectSound();
-
             setPickupToast(true);
             if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
             toastTimerRef.current = setTimeout(() => setPickupToast(false), 1200);
           },
-          onNearTrash: (isNear) => {
-            setNearTrash(isNear);
-          },
-          onTick: (speed) => {
-            setBoatSpeed(speed);
-          }
+          onNearTrash: (isNear) => setNearTrash(isNear),
+          onTick:      (speed)  => setBoatSpeed(speed),
         },
         settings
       );
 
-      gameRef.current = game;
-
-      return () => {
-        game.destroy();
-        gameRef.current = null;
-      };
+      engineRef.current = engine;
+      return () => { engine.destroy(); engineRef.current = null; };
     }
   }, [scene, settings]);
 
+  // ── Pause / resume Engine ────────────────────────────────────────
+  useEffect(() => {
+    if (!engineRef.current) return;
+    if (isPaused) engineRef.current.pause();
+    else          engineRef.current.resume();
+  }, [isPaused]);
+
+  // ── Game timer ───────────────────────────────────────────────────
   useEffect(() => {
     let timer = null;
     if (scene === 'GAME' && !isPaused) {
       timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setScene('GAMEOVER');
-            return 0;
-          }
+        setTimeLeft(prev => {
+          if (prev <= 1) { clearInterval(timer); setScene('GAMEOVER'); return 0; }
           return prev - 1;
         });
       }, 1000);
     }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
+    return () => { if (timer) clearInterval(timer); };
   }, [scene, isPaused]);
 
+  // ─────────────────────────────────────────────────────────────────
   return (
     <div className="w-screen h-screen relative bg-slate-950 overflow-hidden select-none">
+
       {scene === 'MENU' && (
         <MainMenu
-          onNavigate={(target) => setScene(target)}
+          onNavigate={(t) => setScene(t)}
           soundMuted={soundMuted}
           onToggleSound={handleToggleSound}
         />
       )}
 
-      {scene === 'LEADERBOARD' && (
-        <Leaderboard onNavigate={(target) => setScene(target)} />
-      )}
+      {scene === 'LEADERBOARD' && <Leaderboard onNavigate={(t) => setScene(t)} />}
 
       {scene === 'SETTINGS' && (
         <Settings
-          onNavigate={(target) => setScene(target)}
+          onNavigate={(t) => setScene(t)}
           soundMuted={soundMuted}
           onToggleSound={handleToggleSound}
           settings={settings}
@@ -116,13 +108,13 @@ function App() {
         />
       )}
 
-      {scene === 'HOW_TO_PLAY' && (
-        <HowToPlay onNavigate={(target) => setScene(target)} />
-      )}
+      {scene === 'HOW_TO_PLAY' && <HowToPlay onNavigate={(t) => setScene(t)} />}
 
       {scene === 'GAME' && (
         <div className="w-full h-full relative">
           <div ref={containerRef} className="w-full h-full absolute inset-0" />
+
+          <DebugOverlay engineRef={engineRef} />
 
           <HUD
             score={score}
@@ -147,10 +139,7 @@ function App() {
                     RESUME CLEANING ⛵
                   </button>
                   <button
-                    onClick={() => {
-                      setIsPaused(false);
-                      setScene('MENU');
-                    }}
+                    onClick={() => { setIsPaused(false); setScene('MENU'); }}
                     className="w-full py-3.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all cursor-pointer border border-slate-700"
                   >
                     QUIT TO MENU 🏠
