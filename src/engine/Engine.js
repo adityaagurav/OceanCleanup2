@@ -18,6 +18,7 @@ import { Sky }   from 'three/examples/jsm/objects/Sky.js';
 import { GameLoop }            from '../core/GameLoop.js';
 import { InputManager }        from '../player/InputManager.js';
 import { CharacterController } from '../player/CharacterController.js';
+import { BoatController }      from '../player/BoatController.js';
 import { CameraController }    from '../player/CameraController.js';
 import { VegetationSystem }    from '../world/VegetationSystem.js';
 import { ChunkManager }        from '../world/ChunkManager.js';
@@ -78,8 +79,10 @@ export class Engine {
     // Input (must come before character + camera)
     this.input = new InputManager();
 
-    // Character (colliders array passed by reference — filled later by IslandBuilder)
+    // Character and Boat
     this.character = new CharacterController(this.scene, this.colliders);
+    this.boat = new BoatController(this.scene, this.colliders);
+    this.activeVehicle = 'CHARACTER';
 
     // Camera
     this.camera_ctrl = new CameraController(this.camera, this.renderer.domElement);
@@ -102,9 +105,12 @@ export class Engine {
     // Chunks + vegetation
     this.chunks = new ChunkManager(this.scene, this.colliders, this.vegetation);
     
-    // Spawn player at center
-    const spawnPos = new THREE.Vector3(0, 5, 0); // High enough to fall onto terrain
+    // Spawn player near the shore
+    const spawnPos = new THREE.Vector3(70, 5, 0); // High enough to fall onto terrain
     this.character.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
+    
+    // Spawn boat in the water at the shore
+    this.boat.setPosition(75, 0, 0);
     
     // Initialize first chunks around player
     this.chunks.update(spawnPos);
@@ -120,10 +126,13 @@ export class Engine {
     this._onResize  = this._onResize.bind(this);
     this._onKeyDown = (e) => {
       if (e.code === 'KeyF' && GameState.is('PLAYING')) {
-        this.trash.pickupNearest(
-          this.character.getPosition(),
-          this.character.getDeckPosition()
-        );
+        const activePos = this.activeVehicle === 'CHARACTER' ? this.character.getPosition() : this.boat.getPosition();
+        const activeDeck = this.activeVehicle === 'CHARACTER' ? this.character.getDeckPosition() : this.boat.getDeckPosition();
+        this.trash.pickupNearest(activePos, activeDeck);
+      }
+      
+      if (e.code === 'KeyE' && GameState.is('PLAYING')) {
+        this._toggleVehicle();
       }
     };
     window.addEventListener('resize',  this._onResize);
@@ -190,7 +199,9 @@ export class Engine {
       waterColor:      WorldConfig.WATER_COLOR,
       distortionScale: WorldConfig.DISTORTION_SCALE,
       fog:             !!this.scene.fog,
+      alpha:           0.8, // Transparent to see fishes underneath
     });
+    this.water.material.transparent = true;
     this.water.rotation.x = -Math.PI / 2;
     this.scene.add(this.water);
   }
@@ -199,11 +210,38 @@ export class Engine {
   //  Loop hooks
   // ──────────────────────────────────────────────────────────────────────────
 
+  _toggleVehicle() {
+    if (this.activeVehicle === 'CHARACTER') {
+      const dist = this.character.getPosition().distanceTo(this.boat.getPosition());
+      if (dist < 10) {
+        this.activeVehicle = 'BOAT';
+        this.character.group.visible = false;
+        // Snap character to boat
+        this.character.setPosition(this.boat.position.x, this.boat.position.y, this.boat.position.z);
+      }
+    } else {
+      this.activeVehicle = 'CHARACTER';
+      this.character.group.visible = true;
+      // Disembark slightly to the side
+      const disembarkPos = this.boat.getPosition().add(new THREE.Vector3(3, 2, 0));
+      this.character.setPosition(disembarkPos.x, disembarkPos.y, disembarkPos.z);
+      this.character.velocity.set(0, 0, 0);
+    }
+  }
+
   _fixedUpdate(dt) {
     if (!GameState.is('PLAYING')) return;
 
-    this.character.fixedUpdate(this.input, this.camera_ctrl, dt);
-    this.trash.updateProximity(this.character.getPosition());
+    if (this.activeVehicle === 'CHARACTER') {
+      this.character.fixedUpdate(this.input, this.camera_ctrl, dt);
+      this.boat._detectGround(); // Keep boat floating
+    } else {
+      this.boat.fixedUpdate(this.input, this.camera_ctrl, dt);
+      this.character.setPosition(this.boat.position.x, this.boat.position.y, this.boat.position.z);
+    }
+    
+    const activePos = this.activeVehicle === 'CHARACTER' ? this.character.getPosition() : this.boat.getPosition();
+    this.trash.updateProximity(activePos);
   }
 
   _render(alpha, fd) {
@@ -214,24 +252,31 @@ export class Engine {
       // Make water follow camera to appear infinite
       this.water.position.x = this.camera.position.x;
       this.water.position.z = this.camera.position.z;
+      // Add a gentle bobbing motion to create waves lapping against the coast
+      this.water.position.y = Math.sin(this.water.material.uniforms['time'].value * 1.5) * 0.4;
     }
     
-    // Update chunks
-    this.chunks.update(this.character.getPosition());
+    const activePos = this.activeVehicle === 'CHARACTER' ? this.character.getPosition() : this.boat.getPosition();
+    const activeYaw = this.activeVehicle === 'CHARACTER' ? this.character.yaw : this.boat.yaw;
+    const activeDeck = this.activeVehicle === 'CHARACTER' ? this.character.getDeckPosition() : this.boat.getDeckPosition();
+    
+    // Update chunks relative to active vehicle
+    this.chunks.update(activePos);
     
     // Update time and weather
     if (this.timeSystem) this.timeSystem.update(fd, this.renderer);
     if (this.weatherSystem) this.weatherSystem.update(fd);
 
     this.camera_ctrl.update(
-      this.character.getPosition(),
-      this.character.yaw,
+      activePos,
+      activeYaw,
       this.input,
       fd
     );
 
     this.character.renderUpdate(fd, this.camera_ctrl);
-    this.trash.updateReels(this.character.getDeckPosition());
+    this.boat.renderUpdate(fd, this.camera_ctrl);
+    this.trash.updateReels(activeDeck);
 
     this.callbacks.onTick?.(this.character.speed);
 

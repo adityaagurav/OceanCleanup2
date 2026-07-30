@@ -1,4 +1,5 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as THREE from 'three';
 
 /**
@@ -16,6 +17,7 @@ class AssetManagerClass {
     this._gltfCache    = new Map(); // path → Promise<GLTF>
     this._textureCache = new Map(); // path → Promise<Texture>
     this._gltfLoader   = new GLTFLoader();
+    this._fbxLoader    = new FBXLoader();
     this._texLoader    = new THREE.TextureLoader();
   }
 
@@ -27,7 +29,11 @@ class AssetManagerClass {
   loadGLTF(path) {
     if (!this._gltfCache.has(path)) {
       const promise = new Promise((resolve, reject) => {
-        this._gltfLoader.load(path, resolve, undefined, reject);
+        if (path.toLowerCase().endsWith('.fbx')) {
+          this._fbxLoader.load(path, (group) => resolve({ scene: group }), undefined, reject);
+        } else {
+          this._gltfLoader.load(path, resolve, undefined, reject);
+        }
       });
       this._gltfCache.set(path, promise);
     }

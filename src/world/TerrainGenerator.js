@@ -121,4 +121,8 @@ export class TerrainGenerator {
     // Multiply by max height
     return noiseVal * this.maxHeight;
   }
+
+  getMoisture(x, z) {
+    return this.moistureNoise2D(x * 0.005, z * 0.005) * 0.5 + 0.5;
+  }
 }

@@ -15,6 +15,7 @@ export class InputManager {
       jump:     false,  // Space
       sprint:   false,  // Shift
       interact: false,  // F
+      enter_vehicle: false, // E
     };
 
     // Mouse delta — accumulated between frames, consumed each frame
@@ -40,11 +41,14 @@ export class InputManager {
     switch (code) {
       case 'KeyW': case 'ArrowUp':    return 'forward';
       case 'KeyS': case 'ArrowDown':  return 'backward';
-      case 'KeyA': case 'ArrowLeft':  return 'left';
-      case 'KeyD': case 'ArrowRight': return 'right';
+      case 'KeyA': return 'right';
+      case 'KeyD': return 'left';
+      case 'ArrowLeft': return 'left';
+      case 'ArrowRight': return 'right';
       case 'Space':                   return 'jump';
       case 'ShiftLeft': case 'ShiftRight': return 'sprint';
       case 'KeyF':                    return 'interact';
+      case 'KeyE':                    return 'enter_vehicle';
       default:                        return null;
     }
   }

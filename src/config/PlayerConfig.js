@@ -4,15 +4,15 @@
  */
 export const PlayerConfig = {
   // ── Movement ───────────────────────────────────────────────────
-  WALK_SPEED:    3.5,   // m/s
-  RUN_SPEED:     6.5,   // m/s
-  SPRINT_SPEED:  8.5,   // m/s
+  WALK_SPEED:    5.5,   // m/s
+  RUN_SPEED:     10.5,  // m/s
+  SPRINT_SPEED:  14.5,  // m/s
 
   // ── Physics ────────────────────────────────────────────────────
-  JUMP_FORCE:    13.5,  // m/s upward impulse → ~1.2m height
-  GRAVITY:      -9.81,  // m/s²
-  ACCELERATION:  18,    // m/s² — rate of velocity gain
-  DECELERATION:  24,    // m/s² — rate of velocity loss
+  JUMP_FORCE:    24.0,  // snappy jump force
+  GRAVITY:      -32.0,  // higher gravity for less floaty jump
+  ACCELERATION:  35,    // m/s² — rate of velocity gain
+  DECELERATION:  45,    // m/s² — rate of velocity loss
   TURN_SPEED:    12,    // rad/s — body rotation interpolation speed
 
   // ── Ground detection ───────────────────────────────────────────

@@ -19,6 +19,7 @@ import * as THREE from 'three';
 export class ProceduralCharacter {
   constructor() {
     this.root = new THREE.Group();
+    this.root.scale.set(1.4, 1.4, 1.4); // Made character bigger
 
     // Animation time accumulator
     this._t      = 0;

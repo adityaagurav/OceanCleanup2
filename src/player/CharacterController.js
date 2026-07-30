@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { ProceduralCharacter }  from './ProceduralCharacter.js';
+import { ProceduralCharacter } from './ProceduralCharacter.js';
 import { PlayerConfig }         from '../config/PlayerConfig.js';
 
 /**
  * CharacterController.js — Velocity-based third-person character controller.
  *
- * Uses ProceduralCharacter for visuals (no external assets).
+ * Uses ProceduralCharacter for visuals.
  * Physics: velocity accumulation with acceleration/deceleration,
  *          downward raycast for ground detection, gravity, jump impulse.
  */
@@ -186,7 +186,12 @@ export class CharacterController {
     const hits = this._raycaster.intersectObjects(this.colliders, false);
 
     if (hits.length > 0 && hits[0].distance <= RAY_SNAP_THRESHOLD && this.velocity.y <= 0) {
-      this.position.y = hits[0].point.y;
+      this.position.y = Math.max(hits[0].point.y, 0);
+      this.velocity.y = 0;
+      this.isGrounded = true;
+    } else if (this.position.y <= 0) {
+      // Float on water surface
+      this.position.y = 0;
       this.velocity.y = 0;
       this.isGrounded = true;
     }

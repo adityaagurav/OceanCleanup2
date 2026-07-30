@@ -4,8 +4,8 @@
 export const WorldConfig = {
   // ── Ocean ──────────────────────────────────────────────────────
   OCEAN_SIZE: 10000,
-  WATER_COLOR: 0x001e0f,
-  DISTORTION_SCALE: 3.7,
+  WATER_COLOR: 0x1da2d8, // Cartoonish tropical blue
+  DISTORTION_SCALE: 6.0, // Increase distortion for more wavy cartoon look
 
   // ── Islands ────────────────────────────────────────────────────
   SAND_COLOR: 0xc9994a,
