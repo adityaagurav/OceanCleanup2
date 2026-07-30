@@ -3,14 +3,15 @@
  *
  * States:
  *   LOADING  → Initial asset loading
- *   PLAYING  → Normal gameplay
+ *   HARBOR   → Player is on the harbor, can walk and board boat
+ *   BOAT     → Player is controlling the boat, mission active
  *   PAUSED   → Game loop ticks but physics/AI freeze
  *   GAMEOVER → End screen shown
  *
  * Usage:
  *   GameState.transition('PAUSED');
- *   GameState.is('PLAYING');
- *   GameState.onEnter('PAUSED', () => showPauseMenu());
+ *   GameState.is('HARBOR');
+ *   GameState.onEnter('HARBOR', () => showHarborUI());
  */
 class GameStateManagerClass {
   constructor() {
@@ -19,7 +20,7 @@ class GameStateManagerClass {
   }
 
   /** All valid states */
-  static STATES = ['LOADING', 'PLAYING', 'PAUSED', 'GAMEOVER'];
+  static STATES = ['LOADING', 'HARBOR', 'BOAT', 'PAUSED', 'GAMEOVER'];
 
   /** @returns {string} current state name */
   get current() { return this._state; }
@@ -74,6 +75,12 @@ class GameStateManagerClass {
 
   /** Remove all listeners (call on destroy) */
   dispose() { this._listeners = {}; }
+
+  /** Restore the singleton to its initial state before creating a new engine. */
+  reset() {
+    this._state = 'LOADING';
+    this._listeners = {};
+  }
 }
 
 // Singleton export

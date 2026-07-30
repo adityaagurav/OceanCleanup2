@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+<<<<<<< HEAD
 import { FishingBoat } from './FishingBoat.js';
 import { PlayerConfig }  from '../config/PlayerConfig.js';
 
@@ -128,5 +129,98 @@ export class BoatController {
       this.velocity.y = 0;
       this.isGrounded = true;
     }
+=======
+import { BoatConfig } from '../config/BoatConfig.js';
+
+/**
+ * BoatController.js — Simple boat controller for the harbor/ocean game.
+ * 
+ * The boat moves forward/backward with W/S, turns left/right with A/D.
+ * It has a maximum speed and acceleration/deceleration.
+ * It also responds to waves for a bobbing effect.
+ */
+export class BoatController {
+  /**
+   * @param {THREE.Object3D} boat - The boat mesh (or group) to control
+   * @param {InputManager} input - The input manager
+   */
+  constructor(boat, input) {
+    this.boat = boat;
+    this.input = input;
+
+    // Movement state
+    this.speed = 0; // current forward speed (m/s)
+    this.acceleration = BoatConfig.ACCELERATION;
+    this.deceleration = BoatConfig.DECELERATION;
+    this.maxSpeed = BoatConfig.MAX_SPEED;
+    this.reverseSpeed = BoatConfig.REVERSE_SPEED;
+    this.turnSpeed = BoatConfig.TURN_SPEED;
+
+    // Bobbing effect (optional)
+    this.bobOffset = 0;
+    this.bobSpeed = BoatConfig.BOB_SPEED;
+    this.bobAmount = BoatConfig.BOB_AMOUNT;
+  }
+
+  /**
+   * Fixed update for physics (called at fixed timestep)
+   * @param {InputManager} input
+   * @param {number} dt - fixed time step (1/60)
+   */
+  fixedUpdate(input, dt) {
+    // --- 1. Handle throttle (W/S) ---
+    let targetSpeed = 0;
+    if (input.keys.forward) targetSpeed = this.maxSpeed;
+    if (input.keys.backward) targetSpeed = -this.reverseSpeed;
+    
+    // If no input, decelerate towards 0
+    if (!input.keys.forward && !input.keys.backward) {
+      targetSpeed = 0;
+    }
+
+    // Accelerate/decelerate towards target speed
+    const accel = (targetSpeed > this.speed) ? this.acceleration : this.deceleration;
+    this.speed += (targetSpeed - this.speed) * Math.min(accel * dt, 1);
+
+    // --- 2. Handle steering (A/D) ---
+    // Only steer if we have some speed
+    if (Math.abs(this.speed) > 0.1) {
+      // The boat's forward axis is local -Z. Positive yaw turns that heading
+      // left, so A is left and D is right.
+      const turnDirection = (input.keys.right ? 1 : 0) - (input.keys.left ? 1 : 0);
+      const turnAmount = turnDirection * this.turnSpeed * Math.abs(this.speed) / this.maxSpeed;
+      this.boat.rotation.y += turnAmount * dt;
+    }
+
+    // --- 3. Apply movement ---
+    // Move forward in the direction the boat is facing
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(this.boat.quaternion);
+    forward.multiplyScalar(this.speed * dt);
+    this.boat.position.add(forward);
+
+    // --- 4. Update bobbing effect (optional) ---
+    this.bobOffset += this.bobSpeed * dt;
+    const bobY = Math.sin(this.bobOffset) * this.bobAmount;
+    this.boat.position.y = bobY; // assuming the boat's base is at y=0, we adjust to bob
+  }
+
+  /**
+   * Render update for visual effects (called every frame)
+   * @param {number} frameDelta
+   * @param {CameraController} cameraCtrl - for any view-dependent effects
+   */
+  renderUpdate(frameDelta, cameraCtrl) {
+    // For now, no special render updates needed
+    // We could add wake effects, etc.
+  }
+
+  /**
+   * Get the current speed (for HUD)
+   * @returns {number} speed in m/s
+   */
+  getSpeed() {
+    return Math.abs(this.speed);
+>>>>>>> ce7c38d (add harbour boat cleanup gameplay)
   }
 }

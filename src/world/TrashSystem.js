@@ -40,10 +40,17 @@ export class TrashSystem {
     const density = options.trashDensity ?? 'normal';
     this._count = WorldConfig.TRASH_COUNT[density] ?? WorldConfig.TRASH_COUNT.normal;
 
-    this._spawn();
+    this._hasSpawned = false;
   }
 
   // ── Public API ──────────────────────────────────────────────────
+
+  /** Start spawning mission pickups only after the player boards the boat. */
+  start() {
+    if (this._hasSpawned) return;
+    this._hasSpawned = true;
+    this._spawn();
+  }
 
   /**
    * Call each fixed physics step.

@@ -21,10 +21,13 @@ function App() {
   const [pickupToast, setPickupToast] = useState(false);
   const [nearTrash,   setNearTrash]   = useState(false);
   const [isPaused,    setIsPaused]    = useState(false);
+  const [missionState, setMissionState] = useState('harbour');
+  const [isNearBoat, setIsNearBoat] = useState(false);
 
   const containerRef  = useRef(null);
   const engineRef     = useRef(null);
   const toastTimerRef = useRef(null);
+  const missionToastTimerRef = useRef(null);
 
   const handleToggleSound = () => {
     const next = !soundMuted;
@@ -38,8 +41,11 @@ function App() {
       setScore(0);
       setTrashCount(0);
       setTimeLeft(settings.timeLimit);
+      setBoatSpeed(0);
       setIsPaused(false);
       setNearTrash(false);
+      setIsNearBoat(false);
+      setMissionState('harbour');
 
       const engine = new Engine(
         containerRef.current,
@@ -54,12 +60,25 @@ function App() {
           },
           onNearTrash: (isNear) => setNearTrash(isNear),
           onTick:      (speed)  => setBoatSpeed(speed),
+          onMissionState: (state) => {
+            setMissionState(state);
+            if (state === 'started') {
+              if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
+              missionToastTimerRef.current = setTimeout(() => setMissionState('active'), 5000);
+            }
+          },
+          onMissionComplete: () => setScene('GAMEOVER'),
+          onNearBoat: (isNear) => setIsNearBoat(isNear),
         },
         settings
       );
 
       engineRef.current = engine;
-      return () => { engine.destroy(); engineRef.current = null; };
+      return () => {
+        if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
+        engine.destroy();
+        engineRef.current = null;
+      };
     }
   }, [scene, settings]);
 
@@ -71,18 +90,21 @@ function App() {
   }, [isPaused]);
 
   // ── Game timer ───────────────────────────────────────────────────
-  useEffect(() => {
-    let timer = null;
-    if (scene === 'GAME' && !isPaused) {
-      timer = setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev <= 1) { clearInterval(timer); setScene('GAMEOVER'); return 0; }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => { if (timer) clearInterval(timer); };
-  }, [scene, isPaused]);
+   useEffect(() => {
+     let timer = null;
+     if (scene === 'GAME' && !isPaused) {
+       timer = setInterval(() => {
+         // Only decrement time if mission is active
+         if (engineRef.current?.missionActive) {
+           setTimeLeft(prev => {
+            if (prev <= 1) { clearInterval(timer); engineRef.current?.completeMission(); return 0; }
+             return prev - 1;
+           });
+         }
+       }, 1000);
+     }
+     return () => { if (timer) clearInterval(timer); };
+   }, [scene, isPaused]);
 
   // ─────────────────────────────────────────────────────────────────
   return (
@@ -117,15 +139,18 @@ function App() {
           <DebugOverlay engineRef={engineRef} />
 
           <HUD
-            score={score}
-            trashCount={trashCount}
-            timeLeft={timeLeft}
-            boatSpeed={boatSpeed}
-            pickupToast={pickupToast}
-            nearTrash={nearTrash}
-            onPause={() => setIsPaused(true)}
-            onQuit={() => setIsPaused(true)}
-          />
+             score={score}
+             trashCount={trashCount}
+             timeLeft={timeLeft}
+             boatSpeed={boatSpeed}
+             pickupToast={pickupToast}
+             nearTrash={nearTrash}
+             missionActive={engineRef.current ? engineRef.current.missionActive : false}
+             isNearBoat={isNearBoat}
+             missionState={missionState}
+             onPause={() => setIsPaused(true)}
+             onQuit={() => setIsPaused(true)}
+           />
 
           {isPaused && (
             <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6">
