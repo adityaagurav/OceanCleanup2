@@ -23,6 +23,7 @@ export class TimeSystem {
     // Time state
     this.timeOfDay    = 8;     // Start at 8 AM
     this.timeScale    = 1 / 60; // 1 second real-time = 1 minute game-time (60x speed)
+    this.totalDays    = 1;
     // Means 1 full day = 24 minutes real-time.
 
     // Used for calculating sun position
@@ -32,7 +33,10 @@ export class TimeSystem {
   update(dt, renderer) {
     // Advance time
     this.timeOfDay += (dt * this.timeScale);
-    if (this.timeOfDay >= 24) this.timeOfDay -= 24;
+    if (this.timeOfDay >= 24) {
+      this.timeOfDay -= 24;
+      this.totalDays += 1;
+    }
 
     // Calculate Sun position
     // 0 = midnight, 6 = sunrise, 12 = noon, 18 = sunset, 24 = midnight

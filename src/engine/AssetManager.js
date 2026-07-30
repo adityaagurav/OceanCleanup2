@@ -30,7 +30,7 @@ class AssetManagerClass {
     if (!this._gltfCache.has(path)) {
       const promise = new Promise((resolve, reject) => {
         if (path.toLowerCase().endsWith('.fbx')) {
-          this._fbxLoader.load(path, (group) => resolve({ scene: group }), undefined, reject);
+          this._fbxLoader.load(path, (group) => resolve({ scene: group, animations: group.animations || [] }), undefined, reject);
         } else {
           this._gltfLoader.load(path, resolve, undefined, reject);
         }
