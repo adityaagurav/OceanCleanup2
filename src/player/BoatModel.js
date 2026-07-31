@@ -43,6 +43,9 @@ export class BoatModel {
   async loadUpgrade(config) {
     this.currentLevel = config;
     
+    // Show procedural boat as a placeholder while loading
+    this._buildProcedural(config.color, config.scale);
+    
     // Attempt to load GLB
     let gltf;
     try {

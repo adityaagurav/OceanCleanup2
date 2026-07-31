@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
 export const BOAT_LEVELS = [
-  { level: 1, trashNeeded: 0,  slots: 20,  speed: 12, name: 'Small Fishing Boat', glb: 'new_assets/fishing_boat.glb', scale: 1.5, color: 0xE8E8E8 },
-  { level: 2, trashNeeded: 5,  slots: 40,  speed: 15, name: 'Hanger Boat',        glb: 'new_assets/boat with hanger.glb', scale: 2.0, color: 0x88ccff },
-  { level: 3, trashNeeded: 10, slots: 70,  speed: 18, name: 'Large Vessel',       glb: 'new_assets/scene.gltf', scale: 2.5, color: 0x44aa44 },
-  { level: 4, trashNeeded: 15, slots: 120, speed: 20, name: 'House Boat',         glb: 'new_assets/post_apocalyptic_house_boat.glb', scale: 3.0, color: 0xaa4444 },
+  { level: 1, trashNeeded: 0,  slots: 20,  speed: 12, name: 'Small Fishing Boat', glb: 'assets/boat/fishing_boat.glb', scale: 1.5, color: 0xE8E8E8 },
+  { level: 2, trashNeeded: 5,  slots: 40,  speed: 15, name: 'Hanger Boat',        glb: 'assets/boat/boat with hanger.glb', scale: 2.0, color: 0x88ccff },
+  { level: 3, trashNeeded: 10, slots: 70,  speed: 18, name: 'Large Vessel',       glb: 'assets/boat/scene.gltf', scale: 2.5, color: 0x44aa44 },
+  { level: 4, trashNeeded: 15, slots: 120, speed: 20, name: 'House Boat',         glb: 'assets/boat/post_apocalyptic_house_boat.glb', scale: 3.0, color: 0xaa4444 },
 ];
 
 /**

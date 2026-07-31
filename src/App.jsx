@@ -11,17 +11,27 @@ import { DebugOverlay } from './ui/DebugOverlay';
 import { Engine }  from './engine/Engine.js';
 import { soundFx } from './audio/AudioManager';
 
+const getInitialSave = () => {
+  try {
+    const stored = localStorage.getItem('ocean_save');
+    if (stored) return JSON.parse(stored);
+  } catch (e) {}
+  return {};
+};
+
 function App() {
+  const initSave = getInitialSave();
+
   const [scene, setScene]           = useState('MENU');
   const [soundMuted, setSoundMuted] = useState(false);
   const [settings, setSettings]     = useState({ timeLimit: 120, trashDensity: 'normal' });
 
-  const [score,       setScore]       = useState(0);
-  const [trashCount,  setTrashCount]  = useState(0);
-  const [fishCount,   setFishCount]   = useState(0);
-  const [gold,        setGold]        = useState(0); // Keeping for treasure backwards compatibility, but also using as money
-  const [energy,      setEnergy]      = useState(100);
-  const [boatLevel,   setBoatLevel]   = useState(1);
+  const [score,       setScore]       = useState(initSave.score || 0);
+  const [trashCount,  setTrashCount]  = useState(initSave.trashCount || 0);
+  const [fishCount,   setFishCount]   = useState(initSave.fishCount || 0);
+  const [gold,        setGold]        = useState(initSave.gold || 0); 
+  const [energy,      setEnergy]      = useState(initSave.energy !== undefined ? initSave.energy : 100);
+  const [boatLevel,   setBoatLevel]   = useState(initSave.boatLevel || 1);
   const [boatSpeed,   setBoatSpeed]   = useState(0);
   const [gameTime,    setGameTime]    = useState({ timeOfDay: 8, day: 1 });
   const [pickupToast, setPickupToast] = useState(false);
@@ -51,29 +61,8 @@ function App() {
   useEffect(() => {
     if (scene === 'GAME' && containerRef.current) {
       
-      let savedData = {};
-      try {
-        const stored = localStorage.getItem('ocean_save');
-        if (stored) {
-          savedData = JSON.parse(stored);
-          if (savedData.score !== undefined) setScore(savedData.score);
-          if (savedData.trashCount !== undefined) setTrashCount(savedData.trashCount);
-          if (savedData.fishCount !== undefined) setFishCount(savedData.fishCount);
-          if (savedData.energy !== undefined) setEnergy(savedData.energy);
-          if (savedData.boatLevel !== undefined) setBoatLevel(savedData.boatLevel);
-          if (savedData.gold !== undefined) setGold(savedData.gold);
-        }
-      } catch (e) {
-        console.warn('Failed to load save data:', e);
-      }
+      const savedData = { score, trashCount, fishCount, gold, energy, boatLevel, playerPos, playerYaw };
       
-      if (!savedData.score && savedData.score !== 0) {
-        setScore(0);
-        setTrashCount(0);
-        setFishCount(0);
-        setEnergy(100);
-        setBoatLevel(1);
-      }
       setIsPaused(false);
       setNearTrash(false);
 
