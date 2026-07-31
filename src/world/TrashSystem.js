@@ -38,28 +38,46 @@ export class TrashSystem {
     this.trashGroups = [];
     this.trashData = []; // Flat array of all trash data for proximity checks
     
-    this._initInstancedMeshes();
+    this._initInstancedMeshesAsync();
   }
 
-  _initInstancedMeshes() {
-    // Define different trash types
-    const types = [
-      // Plastic bottle / Can (Cylinder)
-      { geo: new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8), mat: new THREE.MeshStandardMaterial({ color: 0x88ccff, transparent: true, opacity: 0.6 }) },
-      // Oil Drum (Larger Cylinder)
-      { geo: new THREE.CylinderGeometry(0.6, 0.6, 1.2, 12), mat: new THREE.MeshStandardMaterial({ color: 0xaa3333, metalness: 0.5 }) },
-      // Wood Plank (Box)
-      { geo: new THREE.BoxGeometry(0.2, 0.1, 1.5), mat: new THREE.MeshStandardMaterial({ color: 0x8B5A2B }) },
-      // Crate (Box)
-      { geo: new THREE.BoxGeometry(1, 1, 1), mat: new THREE.MeshStandardMaterial({ color: 0x6B4A2B }) },
-      // Old Tire (Torus)
-      { geo: new THREE.TorusGeometry(0.5, 0.2, 8, 16), mat: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }) },
-      // Black Garbage Bag (Crumpled shape)
-      { geo: new THREE.DodecahedronGeometry(0.6), mat: new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.6, flatShading: true }) }
-    ];
+  async _initInstancedMeshesAsync() {
+    let meshes = [];
+    
+    try {
+      const gltf = await AssetManager.loadGLTF('assets/trash/scene.gltf');
+      gltf.scene.traverse((child) => {
+        if (child.isMesh) {
+          meshes.push({
+            geo: child.geometry.clone(),
+            mat: child.material
+          });
+        }
+      });
+    } catch (err) {
+      console.warn('Trash GLB failed to load, falling back to procedural trash.', err);
+    }
+    
+    if (meshes.length === 0) {
+      meshes = [
+        // Plastic bottle / Can (Cylinder)
+        { geo: new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8), mat: new THREE.MeshStandardMaterial({ color: 0x88ccff, transparent: true, opacity: 0.6 }) },
+        // Oil Drum (Larger Cylinder)
+        { geo: new THREE.CylinderGeometry(0.6, 0.6, 1.2, 12), mat: new THREE.MeshStandardMaterial({ color: 0xaa3333, metalness: 0.5 }) },
+        // Wood Plank (Box)
+        { geo: new THREE.BoxGeometry(0.2, 0.1, 1.5), mat: new THREE.MeshStandardMaterial({ color: 0x8B5A2B }) },
+        // Crate (Box)
+        { geo: new THREE.BoxGeometry(1, 1, 1), mat: new THREE.MeshStandardMaterial({ color: 0x6B4A2B }) },
+        // Old Tire (Torus)
+        { geo: new THREE.TorusGeometry(0.5, 0.2, 8, 16), mat: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }) },
+        // Black Garbage Bag (Crumpled shape)
+        { geo: new THREE.DodecahedronGeometry(0.6), mat: new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.6, flatShading: true }) }
+      ];
+    }
+
 
     // How many of each type approximately
-    const countPerType = Math.ceil(this._count / types.length);
+    const countPerType = Math.ceil(this._count / meshes.length);
 
     // Generate clusters
     const clusters = [];
@@ -76,7 +94,7 @@ export class TrashSystem {
 
     let globalIndex = 0;
 
-    types.forEach((type, groupIdx) => {
+    meshes.forEach((type, groupIdx) => {
       const iMesh = new THREE.InstancedMesh(type.geo, type.mat, countPerType);
       iMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       

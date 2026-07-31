@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WorldConfig }  from '../config/WorldConfig.js';
+import { AssetManager } from '../engine/AssetManager.js';
 
 /**
  * FishSystem.js — GPU Instanced Fish Schools (Boids)
@@ -33,29 +34,26 @@ export class FishSystem {
     this.fishGroups = [];
     this.fishData = []; // Flat array for fast proximity checks
     
-    this._initInstancedMeshes();
+    this._initInstancedMeshesAsync();
   }
 
-  _initInstancedMeshes() {
-    // Fish geometry: simple cone/cylinder combo for a stylized look
-    const bodyGeo = new THREE.ConeGeometry(0.2, 0.8, 8);
-    bodyGeo.rotateX(Math.PI / 2); // point forward
-    
-    // Different colors for standard fish
+  async _initInstancedMeshesAsync() {
+    // New types using specific GLB models from the user's wildlife pack
     const types = [
-      { color: 0x2E8BFF, isRare: false }, // Blue
-      { color: 0xFFD700, isRare: false }, // Yellow
-      { color: 0xFF8C00, isRare: false }, // Orange
-      { color: 0x32CD32, isRare: false }, // Green
-      { color: 0xFFEA00, isRare: true },  // Gold (Rare)
-      { color: 0xFF3333, isRare: true }   // Tuna (Rare)
+      { glb: 'new_assets/fish/Fish.glb',             isRare: false, baseScale: 0.8 },
+      { glb: 'new_assets/fish/Fish-XWl86YFtpF.glb',  isRare: false, baseScale: 0.8 },
+      { glb: 'new_assets/fish/Fish-BEcU9rjiAq.glb',  isRare: false, baseScale: 0.8 },
+      { glb: 'new_assets/fish/Dolphin.glb',          isRare: true,  baseScale: 0.5 },
+      { glb: 'new_assets/fish/Manta ray.glb',        isRare: true,  baseScale: 0.4 },
+      { glb: 'new_assets/fish/Shark.glb',            isRare: true,  baseScale: 0.3 },
+      { glb: 'new_assets/fish/Whale.glb',            isRare: true,  baseScale: 0.15 }
     ];
 
     const numSchools = 15;
     const schools = [];
     
     for (let i = 0; i < numSchools; i++) {
-      const typeIdx = Math.random() > 0.8 ? (4 + Math.floor(Math.random() * 2)) : Math.floor(Math.random() * 4);
+      const typeIdx = Math.random() > 0.8 ? (3 + Math.floor(Math.random() * 3)) : Math.floor(Math.random() * 3);
       schools.push({
         typeIndex: typeIdx,
         centerX: (Math.random() - 0.5) * 500,
@@ -66,26 +64,46 @@ export class FishSystem {
 
     let globalIndex = 0;
 
-    types.forEach((type, groupIdx) => {
-      // Find all schools that use this type
+    for (let groupIdx = 0; groupIdx < types.length; groupIdx++) {
+      const type = types[groupIdx];
       const schoolsForType = schools.filter(s => s.typeIndex === groupIdx);
       const totalCount = schoolsForType.reduce((acc, s) => acc + s.count, 0);
       
-      if (totalCount === 0) return;
+      if (totalCount === 0) continue;
 
-      const mat = new THREE.MeshStandardMaterial({ 
-        color: type.color,
-        roughness: 0.3,
-        metalness: type.isRare ? 0.8 : 0.1
-      });
-      
-      // If Tuna, scale up the geometry
-      const currentGeo = bodyGeo.clone();
-      if (groupIdx === 5) { // Tuna
-        currentGeo.scale(2, 2, 2);
+      let gltf;
+      try {
+        gltf = await AssetManager.loadGLTF(type.glb);
+      } catch (err) {
+        console.warn(`Fish GLB ${type.glb} failed to load.`, err);
+        continue;
       }
 
-      const iMesh = new THREE.InstancedMesh(currentGeo, mat, totalCount);
+      // Extract the first mesh from the loaded GLB
+      let currentGeo = null;
+      let currentMat = null;
+      gltf.scene.traverse((child) => {
+        if (child.isMesh && !currentGeo) {
+          // Clone geometry and rotate it if needed so it faces forward (Z-axis)
+          currentGeo = child.geometry.clone();
+          currentMat = child.material;
+        }
+      });
+
+      if (!currentGeo) {
+        console.warn(`No mesh found in ${type.glb}`);
+        continue;
+      }
+
+      // We apply standard materials for a uniform look
+      const instancedMat = new THREE.MeshStandardMaterial({ 
+        color: currentMat.color || 0xffffff,
+        roughness: 0.3,
+        metalness: type.isRare ? 0.8 : 0.1,
+        map: currentMat.map || null
+      });
+
+      const iMesh = new THREE.InstancedMesh(currentGeo, instancedMat, totalCount);
       iMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       
       const groupData = [];
@@ -102,7 +120,7 @@ export class FishSystem {
           
           const pos = new THREE.Vector3(school.centerX + offsetX, y, school.centerZ + offsetZ);
           const rot = new THREE.Euler(0, baseDir + (Math.random() - 0.5) * 0.5, 0);
-          const scale = 0.8 + Math.random() * 0.4;
+          const scale = type.baseScale * (0.8 + Math.random() * 0.4);
           
           const data = {
             id: globalIndex++,
@@ -127,12 +145,12 @@ export class FishSystem {
       this.fishGroups.push({
         mesh: iMesh,
         geo: currentGeo,
-        mat: mat,
+        mat: instancedMat,
         data: groupData
       });
       
       this.scene.add(iMesh);
-    });
+    }
   }
 
   updateProximity(playerPos) {
