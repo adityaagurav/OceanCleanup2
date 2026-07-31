@@ -12,10 +12,7 @@ import { Engine }  from './engine/Engine.js';
 import { soundFx } from './audio/AudioManager';
 
 const getInitialSave = () => {
-  try {
-    const stored = localStorage.getItem('ocean_save');
-    if (stored) return JSON.parse(stored);
-  } catch (e) {}
+  // Save system disabled per user request: reset to 0 on refresh
   return {};
 };
 
