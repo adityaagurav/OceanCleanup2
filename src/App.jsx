@@ -4,7 +4,6 @@ import Leaderboard from './ui/Leaderboard';
 import Settings    from './ui/Settings';
 import HowToPlay   from './ui/HowToPlay';
 import HUD         from './ui/HUD';
-import GameOver    from './ui/GameOver';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { Engine }  from './engine/Engine.js';
 import { soundFx } from './audio/AudioManager';
@@ -12,17 +11,17 @@ import { soundFx } from './audio/AudioManager';
 function App() {
   const [scene, setScene]           = useState('MENU');
   const [soundMuted, setSoundMuted] = useState(false);
-  const [settings, setSettings]     = useState({ timeLimit: 120, trashDensity: 'normal' });
+  const [settings, setSettings]     = useState({ trashDensity: 'normal' });
 
   const [score,       setScore]       = useState(0);
   const [trashCount,  setTrashCount]  = useState(0);
-  const [timeLeft,    setTimeLeft]    = useState(120);
   const [boatSpeed,   setBoatSpeed]   = useState(0);
   const [pickupToast, setPickupToast] = useState(false);
   const [nearTrash,   setNearTrash]   = useState(false);
   const [isPaused,    setIsPaused]    = useState(false);
   const [missionState, setMissionState] = useState('harbour');
   const [isNearBoat, setIsNearBoat] = useState(false);
+  const [isDocked, setIsDocked] = useState(false);
 
   const containerRef  = useRef(null);
   const engineRef     = useRef(null);
@@ -40,11 +39,11 @@ function App() {
     if (scene === 'GAME' && containerRef.current) {
       setScore(0);
       setTrashCount(0);
-      setTimeLeft(settings.timeLimit);
       setBoatSpeed(0);
       setIsPaused(false);
       setNearTrash(false);
       setIsNearBoat(false);
+      setIsDocked(false);
       setMissionState('harbour');
 
       const engine = new Engine(
@@ -65,10 +64,13 @@ function App() {
             if (state === 'started') {
               if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
               missionToastTimerRef.current = setTimeout(() => setMissionState('active'), 5000);
+            } else if (state === 'harbour') {
+              // Mission over (left the boat / returned) — cancel any pending toast timer
+              if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
             }
           },
-          onMissionComplete: () => setScene('GAMEOVER'),
           onNearBoat: (isNear) => setIsNearBoat(isNear),
+          onDockState: (docked) => setIsDocked(docked),
         },
         settings
       );
@@ -88,23 +90,6 @@ function App() {
     if (isPaused) engineRef.current.pause();
     else          engineRef.current.resume();
   }, [isPaused]);
-
-  // ── Game timer ───────────────────────────────────────────────────
-   useEffect(() => {
-     let timer = null;
-     if (scene === 'GAME' && !isPaused) {
-       timer = setInterval(() => {
-         // Only decrement time if mission is active
-         if (engineRef.current?.missionActive) {
-           setTimeLeft(prev => {
-            if (prev <= 1) { clearInterval(timer); engineRef.current?.completeMission(); return 0; }
-             return prev - 1;
-           });
-         }
-       }, 1000);
-     }
-     return () => { if (timer) clearInterval(timer); };
-   }, [scene, isPaused]);
 
   // ─────────────────────────────────────────────────────────────────
   return (
@@ -141,12 +126,12 @@ function App() {
           <HUD
              score={score}
              trashCount={trashCount}
-             timeLeft={timeLeft}
              boatSpeed={boatSpeed}
              pickupToast={pickupToast}
              nearTrash={nearTrash}
              missionActive={engineRef.current ? engineRef.current.missionActive : false}
              isNearBoat={isNearBoat}
+             isDocked={isDocked}
              missionState={missionState}
              onPause={() => setIsPaused(true)}
              onQuit={() => setIsPaused(true)}
@@ -176,14 +161,6 @@ function App() {
         </div>
       )}
 
-      {scene === 'GAMEOVER' && (
-        <GameOver
-          score={score}
-          trashCount={trashCount}
-          onRestart={() => setScene('GAME')}
-          onMenu={() => setScene('MENU')}
-        />
-      )}
     </div>
   );
 }

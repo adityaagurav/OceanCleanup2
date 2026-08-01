@@ -9,8 +9,10 @@ export const PlayerConfig = {
   SPRINT_SPEED:  14.5,  // m/s
 
   // ── Physics ────────────────────────────────────────────────────
-  JUMP_FORCE:    24.0,  // snappy jump force
-  GRAVITY:      -32.0,  // higher gravity for less floaty jump
+  // Tuned for a realistic human character: ~0.85 m jump height with a snappy
+  // ~0.55 s airtime. High gravity keeps landings tight without feeling floaty.
+  JUMP_FORCE:    6.4,   // m/s upward impulse (~0.85 m jump at this gravity)
+  GRAVITY:      -24.0,  // m/s² — believable fall speed, controls stay responsive
   ACCELERATION:  35,    // m/s² — rate of velocity gain
   DECELERATION:  45,    // m/s² — rate of velocity loss
   TURN_SPEED:    12,    // rad/s — body rotation interpolation speed

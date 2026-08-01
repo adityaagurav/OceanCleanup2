@@ -10,14 +10,24 @@ export const WorldConfig = {
   // ── Islands ────────────────────────────────────────────────────
   SAND_COLOR: 0xc9994a,
 
-  /** First island is always the spawn island. */
+  // Reserved for FUTURE gameplay destinations — NOT generated yet. The ocean
+  // is fully open and effectively unlimited: TerrainGenerator produces flat
+  // shallow seabed everywhere, so the harbour plaza is the only landmass and
+  // the player can sail in any direction without hitting terrain.
   ISLANDS: [
-    { center: [100,  0,  100], radius: 90  },
-    { center: [-400, 0,  200], radius: 70  },
-    { center: [500,  0, -300], radius: 110 },
-    { center: [-200, 0, -500], radius: 80  },
-    { center: [300,  0,  600], radius: 65  },
+    { center: [4200, 0, 4600], radius: 90  },
+    { center: [-4500, 0, 3800], radius: 70  },
+    { center: [5200, 0, -4200], radius: 110 },
+    { center: [-4800, 0, -4600], radius: 80  },
+    { center: [3900, 0, 5600], radius: 65  },
   ],
+
+  // ── Harbour / open ocean ───────────────────────────────────────
+  // A large band of guaranteed open water around the harbour. The harbour is
+  // the only landmass the player begins on; no terrain islands are generated
+  // within this radius, so sailing away feels open, spacious and unobstructed.
+  HARBOUR_CENTER: [0, 80],
+  OCEAN_CLEARING_RADIUS: 700,
 
   /** Blob count range for organic island shapes [min, max] */
   ISLAND_BLOB_RANGE: [3, 6],

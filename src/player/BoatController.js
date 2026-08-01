@@ -1,135 +1,4 @@
 import * as THREE from 'three';
-<<<<<<< HEAD
-import { FishingBoat } from './FishingBoat.js';
-import { PlayerConfig }  from '../config/PlayerConfig.js';
-
-const {
-  WALK_SPEED, RUN_SPEED, SPRINT_SPEED,
-  GRAVITY, ACCELERATION, DECELERATION,
-  TURN_SPEED, RAY_ORIGIN_OFFSET, RAY_SNAP_THRESHOLD,
-} = PlayerConfig;
-
-export class BoatController {
-  constructor(scene, colliders) {
-    this.scene     = scene;
-    this.colliders = colliders;
-
-    this._boat = new FishingBoat();
-    this._boat.addTo(scene);
-    this.group = this._boat.root;
-
-    this.position    = new THREE.Vector3(0, 0, 0); // Start on water
-    this.velocity    = new THREE.Vector3();
-    this.yaw         = 0;
-    this.isGrounded  = false;
-    
-    // Default animation state
-    this.currentStateName = 'Idle';
-
-    this._raycaster = new THREE.Raycaster();
-    this._downDir   = new THREE.Vector3(0, -1, 0);
-
-    this._inputDir   = new THREE.Vector3();
-    this._desiredXZ  = new THREE.Vector3();
-  }
-
-  setPosition(x, y, z) {
-    this.position.set(x, y, z);
-    this.group.position.copy(this.position);
-  }
-
-  getPosition() { return this.group.position.clone(); }
-
-  getDeckPosition() {
-    return this.group.position.clone().add(new THREE.Vector3(0, 1.2, 0));
-  }
-
-  get speed() {
-    return Math.sqrt(this.velocity.x ** 2 + this.velocity.z ** 2);
-  }
-
-  fixedUpdate(input, camCtrl, dt) {
-    const camForward = camCtrl.getCameraForward();
-    const camRight   = camCtrl.getCameraRight();
-
-    this._inputDir.set(0, 0, 0);
-    if (input.keys.forward)  this._inputDir.add(camForward);
-    if (input.keys.backward) this._inputDir.sub(camForward);
-    if (input.keys.right)    this._inputDir.add(camRight);
-    if (input.keys.left)     this._inputDir.sub(camRight);
-
-    const hasInput = this._inputDir.lengthSq() > 0;
-    if (hasInput) this._inputDir.normalize();
-
-    // Boat speeds (can be tuned later if they need to be faster than character)
-    let targetSpeed = input.keys.sprint ? SPRINT_SPEED * 1.5
-                    : hasInput          ? RUN_SPEED * 1.5
-                    : 0;
-
-    if (input.keys.backward && !input.keys.forward) targetSpeed = WALK_SPEED * 1.5;
-
-    this._desiredXZ.set(
-      hasInput ? this._inputDir.x * targetSpeed : 0,
-      0,
-      hasInput ? this._inputDir.z * targetSpeed : 0,
-    );
-
-    const rate = hasInput ? ACCELERATION * 0.5 : DECELERATION * 0.5; // Boats accelerate slower
-    this.velocity.x += (this._desiredXZ.x - this.velocity.x) * Math.min(rate * dt, 1);
-    this.velocity.z += (this._desiredXZ.z - this.velocity.z) * Math.min(rate * dt, 1);
-
-    if (this.isGrounded) {
-      this.velocity.y = Math.max(this.velocity.y, 0);
-    } else {
-      this.velocity.y += GRAVITY * dt;
-    }
-
-    this.position.x += this.velocity.x * dt;
-    this.position.y += this.velocity.y * dt;
-    this.position.z += this.velocity.z * dt;
-
-    this._detectGround();
-
-    if (hasInput) {
-      const targetYaw = Math.atan2(this._inputDir.x, this._inputDir.z);
-      let diff = targetYaw - this.yaw;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff >  Math.PI) diff -= Math.PI * 2;
-      this.yaw += diff * Math.min(TURN_SPEED * 0.5 * dt, 1); // Boats turn slower
-    }
-
-    this.group.position.copy(this.position);
-    this.group.rotation.y = this.yaw;
-
-    this.currentStateName = this.speed > 0.3 ? 'Run' : 'Idle';
-  }
-
-  renderUpdate(frameDelta, camCtrl) {
-    this._boat.update(this.currentStateName, this.speed, frameDelta);
-  }
-
-  _detectGround() {
-    this.isGrounded = false;
-    if (!this.colliders || this.colliders.length === 0) return;
-
-    const origin = new THREE.Vector3(
-      this.position.x,
-      this.position.y + RAY_ORIGIN_OFFSET,
-      this.position.z
-    );
-    this._raycaster.set(origin, this._downDir);
-    const hits = this._raycaster.intersectObjects(this.colliders, false);
-
-    if (hits.length > 0 && hits[0].distance <= RAY_SNAP_THRESHOLD && this.velocity.y <= 0) {
-      this.position.y = Math.max(hits[0].point.y, 0);
-      this.velocity.y = 0;
-      this.isGrounded = true;
-    } else if (this.position.y <= 0) {
-      this.position.y = 0;
-      this.velocity.y = 0;
-      this.isGrounded = true;
-    }
-=======
 import { BoatConfig } from '../config/BoatConfig.js';
 
 /**
@@ -143,10 +12,13 @@ export class BoatController {
   /**
    * @param {THREE.Object3D} boat - The boat mesh (or group) to control
    * @param {InputManager} input - The input manager
+   * @param {THREE.Mesh[]} [colliders] - solids the boat must not drive through
    */
-  constructor(boat, input) {
+  constructor(boat, input, colliders = []) {
     this.boat = boat;
     this.input = input;
+    this.colliders = colliders;
+    this.enabled = true;
 
     // Movement state
     this.speed = 0; // current forward speed (m/s)
@@ -160,6 +32,8 @@ export class BoatController {
     this.bobOffset = 0;
     this.bobSpeed = BoatConfig.BOB_SPEED;
     this.bobAmount = BoatConfig.BOB_AMOUNT;
+
+    this._ray = new THREE.Raycaster();
   }
 
   /**
@@ -168,6 +42,8 @@ export class BoatController {
    * @param {number} dt - fixed time step (1/60)
    */
   fixedUpdate(input, dt) {
+    if (!this.enabled) return;
+
     // --- 1. Handle throttle (W/S) ---
     let targetSpeed = 0;
     if (input.keys.forward) targetSpeed = this.maxSpeed;
@@ -196,8 +72,17 @@ export class BoatController {
     // Move forward in the direction the boat is facing
     const forward = new THREE.Vector3(0, 0, -1);
     forward.applyQuaternion(this.boat.quaternion);
-    forward.multiplyScalar(this.speed * dt);
-    this.boat.position.add(forward);
+
+    const travel = forward.clone().multiplyScalar(Math.sign(this.speed));
+    const moveDist = Math.abs(this.speed) * dt;
+
+    // Collide with docks, harbour walls and land — never with the open water.
+    // The boat bumps and holds against the pier instead of driving through it.
+    if (moveDist > 0.0001 && this._collisionBlocks(travel, moveDist)) {
+      this.speed = 0;
+    } else {
+      this.boat.position.add(travel.multiplyScalar(moveDist));
+    }
 
     // --- 4. Update bobbing effect (optional) ---
     this.bobOffset += this.bobSpeed * dt;
@@ -221,6 +106,24 @@ export class BoatController {
    */
   getSpeed() {
     return Math.abs(this.speed);
->>>>>>> ce7c38d (add harbour boat cleanup gameplay)
+  }
+
+  /**
+   * Horizontal collision probe. Stops the boat from driving through the dock,
+   * pier or land while leaving it free to glide on open water.
+   * The probe sits just above the wave-bob range so the hull reacts to
+   * structures at water level.
+   * @param {THREE.Vector3} dir - unit travel direction
+   * @param {number} moveDist - distance this step (m)
+   * @returns {boolean} true when the path is blocked
+   */
+  _collisionBlocks(dir, moveDist) {
+    if (!this.colliders || this.colliders.length === 0) return false;
+    const origin = this.boat.position.clone();
+    origin.y = 0.3; // just above the bob range, at dock height
+    this._ray.set(origin, dir);
+    const hits = this._ray.intersectObjects(this.colliders, false);
+    const stopDistance = moveDist + 2.0; // boat half-length margin
+    return hits.length > 0 && hits[0].distance < stopDistance;
   }
 }

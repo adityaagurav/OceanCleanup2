@@ -20,10 +20,12 @@ export class CharacterController {
   /**
    * @param {THREE.Scene} scene
    * @param {THREE.Mesh[]} colliders — island meshes used for ground detection
+   * @param {THREE.Mesh[]} wallColliders — props/buildings that block horizontal movement
    */
-  constructor(scene, colliders) {
+  constructor(scene, colliders, wallColliders = []) {
     this.scene     = scene;
     this.colliders = colliders;
+    this.wallColliders = wallColliders;
 
     // ── Visual ──────────────────────────────────────────────────────
     this._char = new ProceduralCharacter();
@@ -45,6 +47,7 @@ export class CharacterController {
     // ── Raycaster ───────────────────────────────────────────────────
     this._raycaster = new THREE.Raycaster();
     this._downDir   = new THREE.Vector3(0, -1, 0);
+    this._horizRay  = new THREE.Raycaster();
 
     // ── Scratch vectors ─────────────────────────────────────────────
     this._inputDir   = new THREE.Vector3();
@@ -126,6 +129,9 @@ export class CharacterController {
       this.isGrounded  = false;
     }
 
+    // ── 5.5 Horizontal collision ────────────────────────────────────
+    this._resolveHorizontalCollision(dt);
+
     // ── 6. Integrate position ───────────────────────────────────────
     this.position.x += this.velocity.x * dt;
     this.position.y += this.velocity.y * dt;
@@ -172,6 +178,45 @@ export class CharacterController {
   // ─────────────────────────────────────────────────────────────────────────
   //  Private
   // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Prevents walking/clipping through solid props and buildings.
+   * Probes the movement direction on the X and Z axes separately so the body
+   * slides along walls instead of snagging. The probe heights clear the floor
+   * (so the character can step up onto the pier from the water) while catching
+   * low crates/barrels/benches up to tall railings and buildings.
+   */
+  _resolveHorizontalCollision(dt) {
+    if (!this.wallColliders || this.wallColliders.length === 0) return;
+
+    const radius = 0.45;
+    const probes = [0.25, 0.7, 1.15]; // heights above the feet
+    const origin = new THREE.Vector3();
+
+    const blockAxis = (axis) => {
+      const vel = axis === 'x' ? this.velocity.x : this.velocity.z;
+      if (Math.abs(vel) < 0.01) return;
+
+      const dir = axis === 'x'
+        ? new THREE.Vector3(Math.sign(vel), 0, 0)
+        : new THREE.Vector3(0, 0, Math.sign(vel));
+      const travel = Math.abs(vel) * dt + radius;
+
+      for (const h of probes) {
+        origin.set(this.position.x, this.position.y + h, this.position.z);
+        this._horizRay.set(origin, dir);
+        const hits = this._horizRay.intersectObjects(this.wallColliders, false);
+        if (hits.length > 0 && hits[0].distance < travel) {
+          // Blocked — cancel movement along this axis so the body slides
+          if (axis === 'x') this.velocity.x = 0; else this.velocity.z = 0;
+          return;
+        }
+      }
+    };
+
+    blockAxis('x');
+    blockAxis('z');
+  }
 
   _detectGround() {
     this.isGrounded = false;

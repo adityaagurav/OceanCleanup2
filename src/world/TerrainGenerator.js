@@ -40,22 +40,7 @@ export class TerrainGenerator {
       const wz = (cz * this.chunkSize) + lz;
 
       // Sample noise for elevation
-      let height = this._getElevation(wx, wz);
-
-      // Force the center area to be a large Main Island
-      const distFromCenter = Math.sqrt(wx * wx + wz * wz);
-      const islandRadius = 80;
-      if (distFromCenter < islandRadius) {
-        // Core of the island is flat Y = 2.0
-        if (distFromCenter < islandRadius - 20) {
-          height = Math.max(height, 2.0);
-        } else {
-          // Smooth blend down to the procedural noise at the edges
-          const t = (distFromCenter - (islandRadius - 20)) / 20; // 0 to 1
-          const blended = THREE.MathUtils.lerp(2.0, height, t);
-          height = Math.max(height, blended);
-        }
-      }
+      const height = this._getElevation(wx, wz);
 
       pos.setY(i, height);
 
@@ -92,34 +77,16 @@ export class TerrainGenerator {
   }
 
   /**
-   * Helper: Multi-octave noise for natural rolling hills.
+   * Helper: Elevation for a world position.
+   *
+   * The ocean is fully open and effectively unlimited — the harbour plaza is
+   * the ONLY landmass in the game. No procedural islands are generated, so the
+   * player can sail in any direction forever without hitting terrain. Future
+   * islands/locations (WorldConfig.ISLANDS) can be reintroduced here later;
+   * for now every chunk is flat shallow seabed just below the water surface.
    */
   _getElevation(x, z) {
-    const scale = 0.01;
-    
-    // Octave 1: Large features
-    let n1 = this.noise2D(x * scale, z * scale);
-    
-    // Octave 2: Smaller details
-    let n2 = this.noise2D(x * scale * 2, z * scale * 2) * 0.5;
-    
-    // Octave 3: Fine bumps
-    let n3 = this.noise2D(x * scale * 4, z * scale * 4) * 0.25;
-
-    let noiseVal = (n1 + n2 + n3) / 1.75; // Normalize roughly to -1..1
-    
-    // We want mostly ocean with scattered islands.
-    // Shift noise down so most values are below 0 (underwater)
-    noiseVal -= 0.2;
-
-    // If it's above 0, it's an island. Curve it so it rises up sharply like a beach.
-    if (noiseVal > 0) {
-      // Exponentiate to make hills peak
-      noiseVal = Math.pow(noiseVal, 1.2);
-    }
-
-    // Multiply by max height
-    return noiseVal * this.maxHeight;
+    return -0.125 * this.maxHeight; // flat shallow seabed (=-1.5)
   }
 
   getMoisture(x, z) {

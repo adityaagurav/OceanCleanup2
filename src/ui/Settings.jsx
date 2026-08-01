@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import GameButton from '../components/GameButton';
 
 function Settings({ onNavigate, soundMuted, onToggleSound, settings, onUpdateSettings }) {
@@ -34,23 +34,6 @@ function Settings({ onNavigate, soundMuted, onToggleSound, settings, onUpdateSet
             >
               {!soundMuted ? 'ENABLED 🔊' : 'MUTED 🔇'}
             </button>
-          </div>
-
-          {/* Game Duration */}
-          <div className="flex justify-between items-center pb-6 border-b border-slate-800">
-            <div>
-              <h3 className="text-lg font-semibold text-white">Cleaner Mission Time limit</h3>
-              <p className="text-slate-400 text-sm">Select round length for cleanup missions</p>
-            </div>
-            <select
-              value={settings.timeLimit}
-              onChange={(e) => onUpdateSettings({ ...settings, timeLimit: Number(e.target.value) })}
-              className="bg-slate-800 border border-slate-700 text-cyan-300 font-semibold px-4 py-2 rounded-xl focus:outline-none focus:border-cyan-400"
-            >
-              <option value={60}>60 Seconds</option>
-              <option value={120}>120 Seconds</option>
-              <option value={180}>180 Seconds</option>
-            </select>
           </div>
 
           {/* Difficulty */}
