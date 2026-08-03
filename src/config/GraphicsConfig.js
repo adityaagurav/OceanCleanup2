@@ -19,16 +19,18 @@ export const GraphicsConfig = {
   FAR:       20000,
 
   // ── Third-person / First-person camera ─────────────────────────
-  CAM_DEFAULT_DISTANCE:  8.0,
-  CAM_MIN_DISTANCE:      2.0,
-  CAM_MAX_DISTANCE:     16.0,
+  // Framed for a ~1.75 m player character: closer orbit + eye-height look-at
+  // so the harbour's realistic scale reads correctly.
+  CAM_DEFAULT_DISTANCE:  5.5,
+  CAM_MIN_DISTANCE:      1.8,
+  CAM_MAX_DISTANCE:     12.0,
   CAM_DEFAULT_ELEVATION: 0.4,
   CAM_MIN_ELEVATION:    -0.2, // Look down
   CAM_MAX_ELEVATION:     1.20, // Look up
   CAM_SPRING_FACTOR:    15,
   CAM_MOUSE_SENSITIVITY: 0.0025,
   CAM_ZOOM_SENSITIVITY:  0.008,
-  CAM_LOOK_AT_OFFSET: [0.0, 1.2, 0],
+  CAM_LOOK_AT_OFFSET: [0.0, 1.55, 0],
 
   // ── Lighting ───────────────────────────────────────────────────
   AMBIENT_INTENSITY: 0.8,

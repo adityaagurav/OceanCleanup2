@@ -110,6 +110,17 @@ export class CameraController {
   }
 
   /**
+   * Shift the camera by -offset without any spring lag.
+   * Called by the engine's floating-origin rebase so the boat can sail
+   * unlimited distances while coordinates stay small and the camera never
+   * visibly jumps.
+   */
+  rebase(offset) {
+    this._springPos.sub(offset);
+    this.camera.position.sub(offset);
+  }
+
+  /**
    * Returns the FLAT (XZ only) direction the camera is looking.
    * Used by CharacterController to compute "forward" for W key.
    * Because _camYaw is absolute, this never drifts.

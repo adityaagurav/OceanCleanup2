@@ -7,6 +7,7 @@ import { BoatConfig } from '../config/BoatConfig.js';
  * The boat moves forward/backward with W/S, turns left/right with A/D.
  * It has a maximum speed and acceleration/deceleration.
  * It also responds to waves for a bobbing effect.
+ * Uses fixed physics timestep updates with interpolation for smooth rendering.
  */
 export class BoatController {
   /**
@@ -33,6 +34,18 @@ export class BoatController {
     this.bobSpeed = BoatConfig.BOB_SPEED;
     this.bobAmount = BoatConfig.BOB_AMOUNT;
 
+    // Physics interpolation state
+    this.physicsPosition = new THREE.Vector3();
+    this.physicsRotationY = 0;
+    this.prevPosition = new THREE.Vector3();
+    this.prevRotationY = 0;
+
+    // Synchronize initial physics state to match initial boat state
+    this.physicsPosition.copy(this.boat.position);
+    this.physicsRotationY = this.boat.rotation.y;
+    this.prevPosition.copy(this.boat.position);
+    this.prevRotationY = this.boat.rotation.y;
+
     this._ray = new THREE.Raycaster();
   }
 
@@ -43,6 +56,10 @@ export class BoatController {
    */
   fixedUpdate(input, dt) {
     if (!this.enabled) return;
+
+    // Store previous physics state before integration
+    this.prevPosition.copy(this.physicsPosition);
+    this.prevRotationY = this.physicsRotationY;
 
     // --- 1. Handle throttle (W/S) ---
     let targetSpeed = 0;
@@ -65,13 +82,14 @@ export class BoatController {
       // left, so A is left and D is right.
       const turnDirection = (input.keys.right ? 1 : 0) - (input.keys.left ? 1 : 0);
       const turnAmount = turnDirection * this.turnSpeed * Math.abs(this.speed) / this.maxSpeed;
-      this.boat.rotation.y += turnAmount * dt;
+      this.physicsRotationY += turnAmount * dt;
     }
 
     // --- 3. Apply movement ---
     // Move forward in the direction the boat is facing
     const forward = new THREE.Vector3(0, 0, -1);
-    forward.applyQuaternion(this.boat.quaternion);
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.physicsRotationY);
+    forward.applyQuaternion(q);
 
     const travel = forward.clone().multiplyScalar(Math.sign(this.speed));
     const moveDist = Math.abs(this.speed) * dt;
@@ -81,23 +99,40 @@ export class BoatController {
     if (moveDist > 0.0001 && this._collisionBlocks(travel, moveDist)) {
       this.speed = 0;
     } else {
-      this.boat.position.add(travel.multiplyScalar(moveDist));
+      this.physicsPosition.add(travel.multiplyScalar(moveDist));
     }
 
     // --- 4. Update bobbing effect (optional) ---
     this.bobOffset += this.bobSpeed * dt;
     const bobY = Math.sin(this.bobOffset) * this.bobAmount;
-    this.boat.position.y = bobY; // assuming the boat's base is at y=0, we adjust to bob
+    this.physicsPosition.y = bobY;
   }
 
   /**
-   * Render update for visual effects (called every frame)
-   * @param {number} frameDelta
+   * Render update for visual interpolation (called every render frame)
+   * @param {number} alpha - sub-frame interpolation factor
    * @param {CameraController} cameraCtrl - for any view-dependent effects
    */
-  renderUpdate(frameDelta, cameraCtrl) {
-    // For now, no special render updates needed
-    // We could add wake effects, etc.
+  renderUpdate(alpha, cameraCtrl) {
+    if (!this.enabled) return;
+
+    // Linearly interpolate boat position
+    this.boat.position.lerpVectors(this.prevPosition, this.physicsPosition, alpha);
+
+    // Interpolate rotation.y handling wrapping correctly
+    let diff = this.physicsRotationY - this.prevRotationY;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    this.boat.rotation.y = this.prevRotationY + diff * alpha;
+  }
+
+  /**
+   * Shift physics states during a floating-origin rebase.
+   * @param {THREE.Vector3} offset
+   */
+  rebase(offset) {
+    this.physicsPosition.sub(offset);
+    this.prevPosition.sub(offset);
   }
 
   /**
@@ -119,7 +154,7 @@ export class BoatController {
    */
   _collisionBlocks(dir, moveDist) {
     if (!this.colliders || this.colliders.length === 0) return false;
-    const origin = this.boat.position.clone();
+    const origin = this.physicsPosition.clone();
     origin.y = 0.3; // just above the bob range, at dock height
     this._ray.set(origin, dir);
     const hits = this._ray.intersectObjects(this.colliders, false);

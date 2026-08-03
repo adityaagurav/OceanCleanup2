@@ -19,7 +19,10 @@ import * as THREE from 'three';
 export class ProceduralCharacter {
   constructor() {
     this.root = new THREE.Group();
-    this.root.scale.set(1.4, 1.4, 1.4); // Made character bigger
+    // Character height ≈ 1.75 m (5'9") — the whole world (harbour props, piers,
+    // buildings, vehicles) is sized against this reference so nothing reads as
+    // miniature. The rig spans ~2.05 local units, so 0.85 ≈ 1.75 m.
+    this.root.scale.set(0.85, 0.85, 0.85);
 
     // Animation time accumulator
     this._t      = 0;

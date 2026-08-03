@@ -15,6 +15,11 @@ export class WeatherSystem {
     this.targetFogDensity = 0.001;
     this.currentFogDensity = 0.001;
 
+    // Day/night fog tints — night fog takes on a deep navy so the horizon
+    // fades into darkness instead of staying pastel blue.
+    this.dayFogColor   = new THREE.Color(0xcce0ff);
+    this.nightFogColor = new THREE.Color(0x0a1526);
+
     // We use exponential squared fog for realistic atmospheric depth
     this.scene.fog = new THREE.FogExp2(0xcce0ff, this.currentFogDensity);
   }
@@ -35,14 +40,14 @@ export class WeatherSystem {
     }
   }
 
-  update(dt) {
+  update(dt, nightFactor = 0) {
     // Smoothly interpolate fog density
     if (Math.abs(this.currentFogDensity - this.targetFogDensity) > 0.0001) {
       this.currentFogDensity += (this.targetFogDensity - this.currentFogDensity) * dt * 0.1;
       this.scene.fog.density = this.currentFogDensity;
     }
 
-    // Fog color can be synced with sky color at horizon from TimeSystem
-    // (For now, keep it a slight blue/grey)
+    // Fog color follows the day/night cycle (0 = day, 1 = night)
+    this.scene.fog.color.copy(this.dayFogColor).lerp(this.nightFogColor, nightFactor);
   }
 }

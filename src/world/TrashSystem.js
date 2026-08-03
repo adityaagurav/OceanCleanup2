@@ -27,8 +27,8 @@ export class TrashSystem {
     this.score       = 0;
     this.trashCount  = 0;
 
-    // Proximity ring indicator
-    const ringGeo = new THREE.RingGeometry(1.2, 1.7, 32);
+    // Proximity ring indicator (scaled down to match smaller trash)
+    const ringGeo = new THREE.RingGeometry(0.45, 0.7, 32);
     const ringMat = new THREE.MeshBasicMaterial({
       color: 0x00ff88, side: THREE.DoubleSide, transparent: true, opacity: 0.85
     });
@@ -134,6 +134,20 @@ export class TrashSystem {
     this.callbacks.onNearTrash?.(false);
   }
 
+  /**
+   * Shift every world-anchored trash mesh, the proximity ring, and any active
+   * reel by -offset. Keeps trash visually synchronized with the boat when the
+   * engine's floating-origin rebase fires far from the harbour.
+   */
+  rebase(offset) {
+    this.trashes.forEach(t => t.position.sub(offset));
+    this._ring.position.sub(offset);
+    this.activeReels.forEach(r => {
+      r.trash.position.sub(offset);
+      r.startPos.sub(offset);
+    });
+  }
+
   dispose() {
     this.scene.remove(this._ring);
     this.trashes.forEach(t => this.scene.remove(t));
@@ -153,7 +167,7 @@ export class TrashSystem {
       let mesh;
       if (baseScene && Math.random() > 0.4) {
         mesh = baseScene.clone();
-        const s = 1 + Math.random() * 1.5;
+        const s = 0.35 + Math.random() * 0.45;
         mesh.scale.set(s, s, s);
         mesh.rotation.y = Math.random() * Math.PI * 2;
       } else {
@@ -169,21 +183,64 @@ export class TrashSystem {
     const r = Math.random();
     let geo, mat;
     if (r < 0.4) {
-      geo = new THREE.DodecahedronGeometry(0.6, 1);
+      geo = new THREE.DodecahedronGeometry(0.22, 1);
       mat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
     } else if (r < 0.7) {
-      geo = new THREE.CylinderGeometry(0.2, 0.2, 1.2, 8);
+      geo = new THREE.CylinderGeometry(0.08, 0.08, 0.45, 8);
       mat = new THREE.MeshStandardMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 });
     } else {
-      geo = new THREE.CylinderGeometry(0.3, 0.3, 0.8, 12);
+      geo = new THREE.CylinderGeometry(0.11, 0.11, 0.3, 12);
       mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.8, roughness: 0.4 });
     }
     return new THREE.Mesh(geo, mat);
   }
 
   _place(obj) {
-    const d = WorldConfig.TRASH_MIN_DIST + Math.random() * (WorldConfig.TRASH_MAX_DIST - WorldConfig.TRASH_MIN_DIST);
-    const a = Math.random() * Math.PI * 2;
-    obj.position.set(Math.cos(a) * d, -0.3, Math.sin(a) * d);
+    const isLand = (x, z) => {
+      // Harbour landmass: main plaza (x -130..130, z 0..70) + rear yard (z -60..0)
+      if (x >= -130 && x <= 130 && z >= -60 && z <= 70) return true;
+      // P0 central unloading pier: x -6..6, z 70..150
+      if (x >= -6.5 && x <= 6.5 && z >= 70 && z <= 150) return true;
+      // P1 east boat pier: x 10..24, z 70..130
+      if (x >= 9.5 && x <= 24.5 && z >= 70 && z <= 130) return true;
+      // P2 east industrial pier: x 30..42, z 70..140
+      if (x >= 29.5 && x <= 42.5 && z >= 70 && z <= 140) return true;
+      // P3 west boat pier: x -24..-10, z 70..130
+      if (x >= -24.5 && x <= -9.5 && z >= 70 && z <= 130) return true;
+      // P4 west maintenance pier: x -42..-30, z 70..140
+      if (x >= -42.5 && x <= -29.5 && z >= 70 && z <= 140) return true;
+      return false;
+    };
+
+    let px = 0, pz = 0;
+    let attempts = 0;
+    const maxAttempts = 100;
+
+    while (attempts < maxAttempts) {
+      // We want a good density near the harbor, so let's make 25% of the trash spawn closer to the harbor.
+      // The harbor center is around (0, 80).
+      const spawnNearHarbor = Math.random() < 0.25;
+
+      if (spawnNearHarbor) {
+        // Spawn near harbor: center (0, 80), radius 15 to 250
+        const d = 15 + Math.random() * 235;
+        const a = Math.random() * Math.PI * 2;
+        px = Math.cos(a) * d;
+        pz = 80 + Math.sin(a) * d;
+      } else {
+        // Original spawn logic around (0, 0)
+        const d = WorldConfig.TRASH_MIN_DIST + Math.random() * (WorldConfig.TRASH_MAX_DIST - WorldConfig.TRASH_MIN_DIST);
+        const a = Math.random() * Math.PI * 2;
+        px = Math.cos(a) * d;
+        pz = Math.sin(a) * d;
+      }
+
+      if (!isLand(px, pz)) {
+        break;
+      }
+      attempts++;
+    }
+
+    obj.position.set(px, -0.3, pz);
   }
 }

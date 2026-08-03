@@ -76,10 +76,12 @@ function App() {
       );
 
       engineRef.current = engine;
+      window.game = engine;
       return () => {
         if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
         engine.destroy();
         engineRef.current = null;
+        if (window.game === engine) window.game = null;
       };
     }
   }, [scene, settings]);

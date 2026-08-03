@@ -42,6 +42,27 @@ export class ChunkManager {
     this._updateActiveChunks(cx, cz);
   }
 
+  /**
+   * Drop every active chunk so the next update() reloads them around the
+   * player's NEW (rebased) position. Called by the engine's floating-origin
+   * rebase when the boat sails far from the harbour: terrain here is a flat,
+   * uniform seabed, so the reload is visually invisible and keeps world
+   * coordinates small and precise at any sailing distance.
+   */
+  rebase() {
+    for (const [key, mesh] of this.activeChunks) {
+      this.scene.remove(mesh);
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) mesh.material.dispose();
+      this.vegetation.removeChunkVegetation(key);
+      const index = this.colliders.indexOf(mesh);
+      if (index > -1) this.colliders.splice(index, 1);
+    }
+    this.activeChunks.clear();
+    this._lastChunkX = -999;
+    this._lastChunkZ = -999;
+  }
+
   _updateActiveChunks(centerCx, centerCz) {
     const requiredChunks = new Set();
 

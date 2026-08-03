@@ -97,6 +97,7 @@ export class Engine {
     this._setupLighting();
     this._setupSky();
     this._setupWater();
+    this._createWake();
   }
 
   _initSystems() {
@@ -140,6 +141,7 @@ export class Engine {
       onCollect:    (newScore, newCount) => { if (this.missionActive) this.callbacks.onCollect?.(newScore, newCount); },
       onNearTrash:  (isNear) => { if (this.missionActive) this.callbacks.onNearTrash?.(isNear); },
     }, this.options);
+    this.trash.start();
   }
 
   _initEventListeners() {
@@ -192,6 +194,12 @@ export class Engine {
     this.sunLight.shadow.camera.left   = -e; this.sunLight.shadow.camera.right  = e;
     this.sunLight.shadow.camera.top    =  e; this.sunLight.shadow.camera.bottom = -e;
     this.scene.add(this.sunLight);
+
+    // Cool, dim moon light — the TimeSystem controls its position/intensity
+    // so it only illuminates at night. No shadow cast for performance.
+    this.moonLight = new THREE.DirectionalLight(0x9fb8ff, 0);
+    this.moonLight.castShadow = false;
+    this.scene.add(this.moonLight);
   }
 
   _setupSky() {
@@ -226,9 +234,14 @@ export class Engine {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(this.sky).texture;
     
-    // Initialize Time and Weather systems now that lights and sky exist
-    this.timeSystem = new TimeSystem(this.scene, this.sunLight, this.ambientLight, this.sky);
+    // Initialize Time and Weather systems now that lights and sky exist.
+    // The TimeSystem mirrors the player's local clock (real-time day/night).
+    this.timeSystem = new TimeSystem(this.scene, this.sunLight, this.ambientLight, this.sky, this.moonLight);
     this.weatherSystem = new WeatherSystem(this.scene, this);
+
+    // Water tints used to darken the ocean at night
+    this._waterDayColor   = new THREE.Color(WorldConfig.WATER_COLOR);
+    this._waterNightColor = new THREE.Color(0x0a1e33);
   }
 
   async _setupWater() {
@@ -241,7 +254,7 @@ export class Engine {
       textureWidth:    512,
       textureHeight:   512,
       waterNormals:    normals,
-      sunDirection:    new THREE.Vector3(),
+      sunDirection:    new THREE.Vector3(0.5, 0.8, 0.3).normalize(),
       sunColor:        0xffffff,
       waterColor:      WorldConfig.WATER_COLOR,
       distortionScale: WorldConfig.DISTORTION_SCALE,
@@ -283,7 +296,7 @@ export class Engine {
       if (this.boatController) {
         this.boatController.fixedUpdate(this.input, dt);
       }
-      this.trash.updateProximity(this.boat.position);
+      this.trash.updateProximity(this.boatController ? this.boatController.physicsPosition : this.boat.position);
       // Update docking status for the "Press E to Leave Boat" prompt
       const atDock = this._isAtDock();
       if (atDock !== this.canLeaveBoat) {
@@ -310,15 +323,40 @@ export class Engine {
         this.sky.position.z = this.camera.position.z;
       }
     }
-    this.harbour?.update(fd);
+
+    // Floating origin: when the boat sails far from the world origin, rebase
+    // every world-space object back toward (0,0) so coordinates never grow
+    // large enough to degrade float32 rendering precision — the boat, ocean,
+    // terrain, trash and harbour all stay visually synchronized at ANY distance.
+    const playerPos = GameState.is('HARBOR') ? this.character.getPosition() : (this.boat ? this.boat.position : new THREE.Vector3());
+    this._maybeRebase(playerPos);
 
     // Update chunks based on player position (character or boat)
-    const playerPos = GameState.is('HARBOR') ? this.character.getPosition() : (this.boat ? this.boat.position : new THREE.Vector3());
-    this.chunks.update(playerPos);
+    const rebasedPos = GameState.is('HARBOR') ? this.character.getPosition() : (this.boat ? this.boat.position : playerPos);
+    this.chunks.update(rebasedPos);
 
-    // Update time and weather
+    // Update time and weather (real-time local-clock day/night cycle)
     if (this.timeSystem) this.timeSystem.update(fd, this.renderer);
-    if (this.weatherSystem) this.weatherSystem.update(fd);
+    const nightFactor = this.timeSystem ? this.timeSystem.getNightFactor() : 0.0;
+    if (this.weatherSystem) this.weatherSystem.update(fd, nightFactor);
+
+    // Ocean reacts to the sky: point the water's sun specular at the sun (or
+    // moon at night) and darken the water color so night sailing reads as night.
+    if (this.water && this.timeSystem) {
+      const sunDir = this.water.material.uniforms['sunDirection'].value;
+      sunDir.copy(this.timeSystem._sunPos).lerp(this.timeSystem._moonPos, nightFactor);
+      this.water.material.uniforms['waterColor'].value.copy(this._waterDayColor).lerp(this._waterNightColor, nightFactor);
+    }
+
+    // Dynamic night lighting modulation (floodlights + headlights)
+    if (this.harbour) this.harbour.update(fd, nightFactor, this.camera.position);
+    if (this.boat && this.boat.userData.headlight) {
+      this.boat.userData.headlight.intensity = 5.0 * nightFactor;
+    }
+    if (this.boat && this.boat.userData.headlightBeam) {
+      this.boat.userData.headlightBeam.material.opacity = 0.14 * nightFactor;
+      this.boat.userData.headlightBeam.visible = nightFactor > 0.05;
+    }
 
     if (GameState.is('HARBOR')) {
       // Harbor mode: character controls
@@ -335,21 +373,22 @@ export class Engine {
       }
     } else if (GameState.is('BOAT')) {
       // Boat mode: boat controls
-      // Update camera to follow boat
+      // 1. Update boat visuals first (interpolates position/rotation with alpha)
+      if (this.boatController) {
+        this.boatController.renderUpdate(alpha, this.camera_ctrl);
+      }
+      // 2. Update camera to follow boat (using stable flat Y to prevent vertical camera jitter)
       const boatYaw = this.boat ? this.boat.rotation.y : 0;
+      const followPos = this.boat ? this.boat.position.clone() : new THREE.Vector3();
+      followPos.y = 0.0;
       this.camera_ctrl.update(
-        this.boat.position,
+        followPos,
         boatYaw,
         this.input,
         fd
       );
-      // Update boat visuals
-      if (this.boatController) {
-        this.boatController.renderUpdate(fd, this.camera_ctrl);
-      }
       // Update trash reels - we need a deck position for the boat
-      // For now, we'll use the boat's position plus an offset (to be improved)
-      const deckPos = this.boat.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+      const deckPos = this.boat ? this.boat.position.clone().add(new THREE.Vector3(0, 1.2, 0)) : new THREE.Vector3();
       this.trash.updateReels(deckPos);
       // Get speed from boat controller and convert to knots
       const speed = this.boatController ? this.boatController.speed * 1.94384 : 0;
@@ -359,6 +398,7 @@ export class Engine {
       }
     }
 
+    this._updateWake(fd);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -486,6 +526,60 @@ export class Engine {
     const ring = add(new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.055, 8, 14), sailMat));
     ring.position.set(0.6, 1.08, 0.65);
     ring.rotation.x = Math.PI / 2;
+
+    // Headlight casing & lens at the bow (relevant to boat size)
+    const headlightCasing = add(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.35, 8), woodMat));
+    headlightCasing.rotation.x = Math.PI / 2;
+    headlightCasing.position.set(0, 0.98, -2.5);
+
+    const headlightLens = add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 8), new THREE.MeshBasicMaterial({ color: 0xffeaad })));
+    headlightLens.rotation.x = Math.PI / 2;
+    headlightLens.position.set(0, 0.98, -2.68);
+
+    // ── Boat headlamp: ONE forward-facing spotlight cone ────────────────
+    // A real boat headlight throws a single tight cone ahead of the bow. The
+    // spotlight is parented to the boat (so it rotates with it) and its target
+    // is a child of the boat too (so it stays aimed straight ahead along -Z).
+    // The visible beam cone below exactly matches this spotlight's angle/range
+    // so there is NO second light source and nothing is cast behind the stern.
+    const HEADLIGHT_ANGLE = 0.30;   // ~17° half-angle — a realistic beam
+    const HEADLIGHT_RANGE = 55;     // metres
+    const headlight = new THREE.SpotLight(0xfff0c8, 5.0, HEADLIGHT_RANGE, HEADLIGHT_ANGLE, 0.45, 1.1);
+    headlight.position.set(0, 1.0, -2.7);
+    headlight.castShadow = false; // cheap; no real-time spot shadows on the ocean
+
+    // Aim the cone straight ahead: boat forward is local -Z, so the target
+    // sits far ahead on the boat's own axis (parented to the boat = rotates
+    // with it, never drags behind).
+    const target = new THREE.Object3D();
+    target.position.set(0, 0.4, -30.0);
+    boat.add(target);
+    headlight.target = target;
+
+    boat.add(headlight);
+    boat.userData.headlight = headlight;
+
+    // Volumetric beam cone matched to the spotlight's cone (same angle/range)
+    // so the visible light and the actual light always line up perfectly.
+    const beamLen = HEADLIGHT_RANGE * 0.6;                 // ~33
+    const beamRadius = Math.tan(HEADLIGHT_ANGLE) * beamLen; // matches spot cone
+    const beamGeom = new THREE.ConeGeometry(beamRadius, beamLen, 16, 1, true);
+    beamGeom.translate(0, -beamLen / 2, 0); // translate so origin is at the tip
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0xfff0c8,
+      transparent: true,
+      opacity: 0.14,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      fog: false,
+    });
+    const beamMesh = new THREE.Mesh(beamGeom, beamMat);
+    beamMesh.rotation.x = Math.PI / 2; // point along local -Z (90 degrees around X)
+    beamMesh.position.set(0, 1.0, -2.7);
+    boat.add(beamMesh);
+    boat.userData.headlightBeam = beamMesh;
+
     return boat;
   }
 
@@ -558,6 +652,10 @@ export class Engine {
       this.boatController = new BoatController(this.boat, this.input, this.colliders);
     }
     if (this.boatController) {
+      this.boatController.physicsPosition.copy(this.boat.position);
+      this.boatController.physicsRotationY = this.boat.rotation.y;
+      this.boatController.prevPosition.copy(this.boat.position);
+      this.boatController.prevRotationY = this.boat.rotation.y;
       this.boatController.enabled = true;
     }
     // Start the mission — no time limit, the player can sail as long as they like.
@@ -596,5 +694,148 @@ export class Engine {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  //  Floating origin
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Rebase the world when the boat sails beyond REBASE_THRESHOLD units from
+   * the origin, snapping positions back to a 128 m grid. This keeps every
+   * coordinate small (<= ~450 m) so float32 rendering precision never degrades
+   * no matter how far the player sails — the boat always moves smoothly and
+   * stays visually synchronized with the ocean, terrain, trash and harbour.
+   */
+  _maybeRebase(playerPos) {
+    if (!GameState.is('BOAT') || !this.boat) return;
+    const THRESHOLD = 384;
+    const GRID = 128;
+    const px = playerPos.x, pz = playerPos.z;
+    if (Math.abs(px) < THRESHOLD && Math.abs(pz) < THRESHOLD) return;
+    const offset = new THREE.Vector3(Math.round(px / GRID) * GRID, 0, Math.round(pz / GRID) * GRID);
+    this._rebaseWorld(offset);
+  }
+
+  /** Shift the entire world by -offset, keeping relative positions identical. */
+  _rebaseWorld(offset) {
+    if (this.boat) this.boat.position.sub(offset);
+    if (this.boatController) this.boatController.rebase(offset);
+    this.character.setPosition(
+      this.character.position.x - offset.x,
+      this.character.position.y,
+      this.character.position.z - offset.z
+    );
+    this.harbour?.rebase(offset);
+    if (this.dockTrigger) this.dockTrigger.position.sub(offset);
+    this.trash?.rebase(offset);
+    this.chunks?.rebase(); // flat seabed reloads invisibly next chunks.update()
+    this.camera_ctrl?.rebase(offset);
+    this._wakePoints?.forEach(p => p.sub(offset));
+    // Water and sky follow the camera — sync them to the rebased camera now so
+    // the horizon does not lag one frame behind during the rebase.
+    if (this.water) { this.water.position.x = this.camera.position.x; this.water.position.z = this.camera.position.z; }
+    if (this.sky)   { this.sky.position.x = this.camera.position.x;   this.sky.position.z = this.camera.position.z; }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  //  Boat wake (world-anchored foam trail)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * A short ribbon of foam left behind the stern. It lives in WORLD space (it
+   * does not follow the camera), so while the boat is under way the player
+   * clearly sees the wake streaming away behind them — a constant motion cue
+   * that keeps the sail feeling alive even on the featureless open ocean where
+   * water, sky and seabed all follow the camera.
+   */
+  _createWake() {
+    const MAX = 80;
+    this._wakePoints = [];
+    // Scratch objects reused every frame (avoids ~160 allocations/frame).
+    this._wakeStern = new THREE.Vector3();
+    this._wakeDir   = new THREE.Vector3();
+    this._wakePerp  = new THREE.Vector3();
+    this._wakeColor = new THREE.Color();
+    this._wakeGeom = new THREE.BufferGeometry();
+    this._wakeGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 2 * 3), 3));
+    this._wakeGeom.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(MAX * 2 * 3), 3));
+    const idx = [];
+    for (let i = 0; i < MAX - 1; i++) {
+      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    this._wakeGeom.setIndex(idx);
+    this._wakeGeom.setDrawRange(0, 0);
+    this._wakeMesh = new THREE.Mesh(
+      this._wakeGeom,
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.55,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    this._wakeMesh.renderOrder = 5;
+    this._wakeMesh.frustumCulled = false;
+    this._wakeMesh.visible = false;
+    this.scene.add(this._wakeMesh);
+  }
+
+  _updateWake(frameDelta) {
+    if (!this._wakeMesh || !this._wakeGeom) return;
+    const isBoat = GameState.is('BOAT') && this.boat && this.boatController;
+    if (!isBoat || Math.abs(this.boatController.speed) < 0.4) {
+      // Hidden — drop stale world-space points so the trail never "teleports"
+      // when the boat stops and later accelerates again.
+      if (this._wakeMesh.visible) {
+        this._wakeMesh.visible = false;
+        this._wakePoints.length = 0;
+        this._wakeGeom.setDrawRange(0, 0);
+      }
+      return;
+    }
+    this._wakeMesh.visible = true;
+
+    // Stern world position (boat faces local -Z, so the stern is local +Z).
+    this._wakeStern.set(0, 0, 1.9).applyQuaternion(this.boat.quaternion).add(this.boat.position);
+    this._wakeStern.y = (this.water ? this.water.position.y : 0) + 0.1; // just above the waterline
+
+    const last = this._wakePoints[0];
+    if (!last || last.distanceTo(this._wakeStern) > 0.35) {
+      this._wakePoints.unshift(this._wakeStern.clone());
+      if (this._wakePoints.length > 80) this._wakePoints.pop();
+    }
+
+    const n = this._wakePoints.length;
+    const posAttr = this._wakeGeom.attributes.position;
+    const colAttr = this._wakeGeom.attributes.color;
+    const pos = posAttr.array;
+    const col = colAttr.array;
+    if (n < 2) { this._wakeGeom.setDrawRange(0, 0); return; }
+
+    for (let i = 0; i < n; i++) {
+      const p = this._wakePoints[i];
+      const nxt = this._wakePoints[Math.min(i + 1, n - 1)];
+      this._wakeDir.subVectors(nxt, p);
+      this._wakePerp.set(-this._wakeDir.z, 0, this._wakeDir.x);
+      if (this._wakePerp.lengthSq() < 1e-6) this._wakePerp.set(1, 0, 0);
+      this._wakePerp.normalize().multiplyScalar(0.55);
+
+      const li = i * 6;
+      pos[li]     = p.x + this._wakePerp.x; pos[li + 1] = p.y; pos[li + 2]     = p.z + this._wakePerp.z;
+      pos[li + 3] = p.x - this._wakePerp.x; pos[li + 4] = p.y; pos[li + 5]     = p.z - this._wakePerp.z;
+
+      // Foam fades from white at the stern to dark water-blue at the tail.
+      const f = 1 - i / (n - 1);
+      this._wakeColor.setHSL(0.55, 0.6, 0.18 + 0.82 * f);
+      col[li] = col[li + 3] = this._wakeColor.r;
+      col[li + 1] = col[li + 4] = this._wakeColor.g;
+      col[li + 2] = col[li + 5] = this._wakeColor.b;
+    }
+    posAttr.needsUpdate = true;
+    colAttr.needsUpdate = true;
+    this._wakeGeom.setDrawRange(0, (n - 1) * 6);
   }
 }
