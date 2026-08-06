@@ -9,7 +9,10 @@ class SoundController {
 
   init() {
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      // Guard for non-browser contexts (tests, SSR) — `window` may not exist.
+      const AudioCtx = typeof window !== 'undefined'
+        ? (window.AudioContext || window.webkitAudioContext)
+        : null;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
         this.master = this.ctx.createGain();
