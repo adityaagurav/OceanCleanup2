@@ -1,13 +1,22 @@
 import * as THREE from 'three';
 import { BoatConfig } from '../config/BoatConfig.js';
+import { BoatInertia } from './BoatInertia.js';
 
 /**
- * BoatController.js — Simple boat controller for the harbor/ocean game.
+ * BoatController.js — Boat movement controller for the harbor/ocean game.
  * 
- * The boat moves forward/backward with W/S, turns left/right with A/D.
- * It has a maximum speed and acceleration/deceleration.
- * It also responds to waves for a bobbing effect.
- * Uses fixed physics timestep updates with interpolation for smooth rendering.
+ * The boat moves forward/backward with W/S, turns left/right with A/D, and
+ * bumps against docks/land instead of driving through them.
+ * 
+ * NOTE: ALL momentum/throttle/steering-feel math lives in BoatInertia.js (the
+ * "heavy" layer: progressive throttle, water drag coast, steering inertia).
+ * This controller only integrates the resulting speed/yaw into position and
+ * keeps the fixed-timestep interpolation + collision behaviour intact.
+ * 
+ * Vertical floating (Y, pitch, roll) is owned by BoatBuoyancy.js — this
+ * controller exposes the speed/throttle/steer/accel signals those systems feed
+ * on. Uses fixed physics timestep updates with interpolation for smooth
+ * rendering.
  */
 export class BoatController {
   /**
@@ -21,18 +30,14 @@ export class BoatController {
     this.colliders = colliders;
     this.enabled = true;
 
-    // Movement state
-    this.speed = 0; // current forward speed (m/s)
-    this.acceleration = BoatConfig.ACCELERATION;
-    this.deceleration = BoatConfig.DECELERATION;
+    // Momentum / inertia (heavy feel) — owns speed, throttle, steer, yawRate.
+    this.inertia = new BoatInertia();
+    this.speed    = 0; // current forward speed (m/s, signed)
+    this.throttle = 0; // smoothed -1..1 (positive = forward) — for feel/audio
+    this.steer    = 0; // smoothed helm -1..1 (positive = turning left)
+    this.accel    = 0; // signed acceleration (m/s²) — for buoyancy pitch
     this.maxSpeed = BoatConfig.MAX_SPEED;
     this.reverseSpeed = BoatConfig.REVERSE_SPEED;
-    this.turnSpeed = BoatConfig.TURN_SPEED;
-
-    // Bobbing effect (optional)
-    this.bobOffset = 0;
-    this.bobSpeed = BoatConfig.BOB_SPEED;
-    this.bobAmount = BoatConfig.BOB_AMOUNT;
 
     // Physics interpolation state
     this.physicsPosition = new THREE.Vector3();
@@ -61,32 +66,16 @@ export class BoatController {
     this.prevPosition.copy(this.physicsPosition);
     this.prevRotationY = this.physicsRotationY;
 
-    // --- 1. Handle throttle (W/S) ---
-    let targetSpeed = 0;
-    if (input.keys.forward) targetSpeed = this.maxSpeed;
-    if (input.keys.backward) targetSpeed = -this.reverseSpeed;
-    
-    // If no input, decelerate towards 0
-    if (!input.keys.forward && !input.keys.backward) {
-      targetSpeed = 0;
-    }
+    // --- 1. Momentum (progressive throttle, water drag, steering inertia) ---
+    this.inertia.update(input, dt);
+    this.speed    = this.inertia.speed;
+    this.throttle = this.inertia.throttle;
+    this.steer    = this.inertia.steer;
+    this.accel    = this.inertia.accel;
+    this.physicsRotationY += this.inertia.yawRate * dt;
 
-    // Accelerate/decelerate towards target speed
-    const accel = (targetSpeed > this.speed) ? this.acceleration : this.deceleration;
-    this.speed += (targetSpeed - this.speed) * Math.min(accel * dt, 1);
-
-    // --- 2. Handle steering (A/D) ---
-    // Only steer if we have some speed
-    if (Math.abs(this.speed) > 0.1) {
-      // The boat's forward axis is local -Z. Positive yaw turns that heading
-      // left, so A is left and D is right.
-      const turnDirection = (input.keys.right ? 1 : 0) - (input.keys.left ? 1 : 0);
-      const turnAmount = turnDirection * this.turnSpeed * Math.abs(this.speed) / this.maxSpeed;
-      this.physicsRotationY += turnAmount * dt;
-    }
-
-    // --- 3. Apply movement ---
-    // Move forward in the direction the boat is facing
+    // --- 2. Apply movement ---
+    // Move forward in the direction the boat is facing (local -Z).
     const forward = new THREE.Vector3(0, 0, -1);
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.physicsRotationY);
     forward.applyQuaternion(q);
@@ -98,14 +87,15 @@ export class BoatController {
     // The boat bumps and holds against the pier instead of driving through it.
     if (moveDist > 0.0001 && this._collisionBlocks(travel, moveDist)) {
       this.speed = 0;
+      this.inertia.halt();
     } else {
       this.physicsPosition.add(travel.multiplyScalar(moveDist));
     }
 
-    // --- 4. Update bobbing effect (optional) ---
-    this.bobOffset += this.bobSpeed * dt;
-    const bobY = Math.sin(this.bobOffset) * this.bobAmount;
-    this.physicsPosition.y = bobY;
+    // Vertical float (Y/pitch/roll) is owned by BoatBuoyancy — the physics
+    // state rides at a stable base height so the collision probe and the
+    // controller's XZ interpolation stay independent of the waves.
+    this.physicsPosition.y = 0;
   }
 
   /**

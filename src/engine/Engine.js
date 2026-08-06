@@ -19,6 +19,8 @@ import { GameLoop }            from '../core/GameLoop.js';
 import { InputManager }        from '../player/InputManager.js';
 import { CharacterController } from '../player/CharacterController.js';
 import { BoatController }      from '../player/BoatController.js';
+import { BoatBuoyancy }        from '../player/BoatBuoyancy.js';
+import { BoatEffects }         from '../player/BoatEffects.js';
 import { CameraController }    from '../player/CameraController.js';
 import { VegetationSystem }    from '../world/VegetationSystem.js';
 import { ChunkManager }        from '../world/ChunkManager.js';
@@ -26,11 +28,14 @@ import { TimeSystem }          from '../core/TimeSystem.js';
 import { WeatherSystem }       from '../core/WeatherSystem.js';
 import { TrashSystem }         from '../world/TrashSystem.js';
 import { HarbourManager }      from '../world/HarbourManager.js';
+import { WaveSampler }         from '../world/WaveSampler.js';
 import { AssetManager }        from './AssetManager.js';
 import { GameState }           from './GameStateManager.js';
 import { GraphicsConfig }      from '../config/GraphicsConfig.js';
 import { WorldConfig }         from '../config/WorldConfig.js';
 import { PerformanceConfig }   from '../config/PerformanceConfig.js';
+import { BoatConfig }          from '../config/BoatConfig.js';
+import { BoatAudioController } from '../audio/BoatAudioController.js';
 
 export class Engine {
   constructor(container, callbacks = {}, options = {}) {
@@ -110,10 +115,15 @@ export class Engine {
     const gc = GraphicsConfig;
     this.camera = new THREE.PerspectiveCamera(gc.FOV, this._aspect(), gc.NEAR, gc.FAR);
 
+    // Shared floating systems: one wave field everyone samples, the fake
+    // buoyancy that floats the hull on it, and the pooled water effects.
+    this.waveSampler = new WaveSampler();
+    this.buoyancy    = new BoatBuoyancy();
+    this.effects     = new BoatEffects(this.scene);
+
     this._setupLighting();
     this._setupSky();
     this._setupWater();
-    this._createWake();
   }
 
   _initSystems() {
@@ -134,6 +144,9 @@ export class Engine {
       onFixedUpdate: (dt)        => this._fixedUpdate(dt),
       onRender:      (alpha, fd) => this._render(alpha, fd),
     });
+
+    // Dynamic synthesized boat/ambience audio (routes through soundFx master)
+    this.boatAudio = new BoatAudioController();
 
     // Time and Weather (Needs sky and lights, initialized after scene setup)
     // We will initialize them in _initWorld or _initScene, actually let's do it in _setupLighting and _setupSky
@@ -329,11 +342,8 @@ export class Engine {
         this._wasNearBoat = this.isNearBoat;
         this.callbacks.onNearBoat?.(this.isNearBoat);
       }
-      if (this.boat) {
-        // Gentle rocking while moored at the pier
-        this.boat.position.y = this.harbour.boatSpawn.y + Math.sin(performance.now() * 0.0012) * 0.12;
-        this.boat.rotation.z = Math.sin(performance.now() * 0.0009) * 0.025;
-      }
+      // NOTE: moored rocking is now driven by BoatBuoyancy in _render, so the
+      // boat floats on the same wave field whether moored or at sea.
     } else if (GameState.is('BOAT')) {
       if (this.boatController) {
         this.boatController.fixedUpdate(this.input, dt);
@@ -384,7 +394,14 @@ export class Engine {
   }
 
   _render(alpha, fd) {
-    if (!GameState.is('HARBOR') && !GameState.is('BOAT')) return;
+    this._waveTime = (this._waveTime || 0) + fd;
+
+    const playing = GameState.is('HARBOR') || GameState.is('BOAT');
+    if (!playing) {
+      // Paused / menu — fade continuous audio to silence.
+      this.boatAudio?.update(fd, { active: false });
+      return;
+    }
 
     // Keep the render scale tuned to the machine before drawing this frame.
     this._applyAdaptiveResolution(fd);
@@ -392,11 +409,12 @@ export class Engine {
     if (this.water) {
       this.water.material.uniforms['time'].value += fd;
       if (this.waterFollowsCamera) {
-        // Make water follow camera to appear infinite
+        // Make water follow camera to appear infinite. The plane stays flat at
+        // y=0 — waves are faked by the boat/effects/trash sampling the shared
+        // WaveSampler field, so the waterline and the floating objects always
+        // agree (no hull clipping through a globally bobbing plane).
         this.water.position.x = this.camera.position.x;
         this.water.position.z = this.camera.position.z;
-        // Gentle bobbing motion creates waves lapping against the coast
-        this.water.position.y = Math.sin(this.water.material.uniforms['time'].value * 1.5) * 0.4;
         // Keep the sky centred on the camera too so the horizon stays intact
         // no matter how far the boat sails (shader patched above).
         this.sky.position.x = this.camera.position.x;
@@ -442,8 +460,13 @@ export class Engine {
       this.water.material.uniforms['waterColor'].value.copy(this._waterDayColor).lerp(this._waterNightColor, nightFactor);
     }
 
+    // Floating trash rides the same wave field (bob / spin / drift) and gets a
+    // gentle outward push when the boat passes close by.
+    const boatSpeed = this.boatController ? this.boatController.speed : 0;
+    this.trash.updateFloating(fd, this.waveSampler, this._waveTime, boatSpeed, this.boat);
+
     // Dynamic night lighting modulation (floodlights + headlights)
-    if (this.harbour) this.harbour.update(fd, nightFactor, this.camera.position);
+    if (this.harbour) this.harbour.update(fd, nightFactor, this.camera.position, this.waveSampler);
     if (this.boat && this.boat.userData.headlight) {
       this.boat.userData.headlight.intensity = 5.0 * nightFactor;
     }
@@ -465,34 +488,75 @@ export class Engine {
       if (this.missionActive) {
         this.callbacks.onTick?.(this.character.speed * 1.94384);
       }
+
+      // The moored boat still floats: same buoyancy, zero speed → gentle
+      // Perlin rocking instead of the old sine-wave wobble.
+      if (this.boat) {
+        this.buoyancy.update(fd, this.boat, {
+          speed: 0, throttle: 0, steer: 0,
+          time: this._waveTime, sampler: this.waveSampler,
+        });
+      }
+      this.boatAudio.update(fd, { speed: 0, throttle: 0, harborFactor: 1, inBoat: false, active: true });
     } else if (GameState.is('BOAT')) {
       // Boat mode: boat controls
-      // 1. Update boat visuals first (interpolates position/rotation with alpha)
+      // 1. Update boat XZ + yaw (interpolated physics), then float the hull on
+      //    the wave field (Y + pitch + roll) and drive the wake/particles.
       if (this.boatController) {
         this.boatController.renderUpdate(alpha, this.camera_ctrl);
       }
-      // 2. Update camera to follow boat (using stable flat Y to prevent vertical camera jitter)
+      const speed    = this.boatController ? this.boatController.speed    : 0;
+      const throttle = this.boatController ? this.boatController.throttle : 0;
+      const steer    = this.boatController ? this.boatController.steer    : 0;
+      const accel    = this.boatController ? this.boatController.accel    : 0;
+      if (this.boat) {
+        this.buoyancy.update(fd, this.boat, {
+          speed, throttle, steer, accel,
+          time: this._waveTime, sampler: this.waveSampler,
+        });
+        this.effects.update(fd, this.boat, {
+          speed, throttle, steer,
+          time: this._waveTime, sampler: this.waveSampler,
+        });
+      }
+
+      // 2. Camera feels attached to the heavy hull: follows at its real buoyed
+      //    height, rolls slightly into turns, tilts with acceleration, and has
+      //    a tiny extra lag. Never parented, never motion-sickness inducing.
       const boatYaw = this.boat ? this.boat.rotation.y : 0;
       const followPos = this.boat ? this.boat.position.clone() : new THREE.Vector3();
-      followPos.y = 0.0;
-      this.camera_ctrl.update(
-        followPos,
-        boatYaw,
-        this.input,
-        fd
-      );
+      const harborFactor = this.boat
+        ? this.waveSampler.getHarborFactor(this.boat.position.x, this.boat.position.z)
+        : 1;
+      const boatFeel = this.boat ? {
+        bob:   Math.sin(this._waveTime * BoatConfig.CAMERA.BOB_SPEED) * BoatConfig.CAMERA.BOB_AMOUNT * (1 - harborFactor),
+        roll:  this.boat.rotation.z * BoatConfig.CAMERA.ROLL_AMOUNT,
+        pitch: this.boat.rotation.x,
+        delay: BoatConfig.CAMERA.DELAY,
+        yaw:   boatYaw,   // hull heading — camera trails it during turns
+        speedFactor: Math.min(1, Math.abs(speed) / BoatConfig.MAX_SPEED), // FOV
+      } : null;
+      this.camera_ctrl.update(followPos, boatYaw, this.input, fd, boatFeel);
+
       // Update trash reels - we need a deck position for the boat
       const deckPos = this.boat ? this.boat.position.clone().add(new THREE.Vector3(0, 1.2, 0)) : new THREE.Vector3();
       this.trash.updateReels(deckPos);
       // Get speed from boat controller and convert to knots
-      const speed = this.boatController ? this.boatController.speed * 1.94384 : 0;
+      const speedKnots = speed * 1.94384;
       // Only update HUD and scoring if mission is active
       if (this.missionActive) {
-        this.callbacks.onTick?.(speed);
+        this.callbacks.onTick?.(speedKnots);
       }
+      // Dynamic boat audio: engine/water/wind crossfade + harbour ambience.
+      this.boatAudio.update(fd, {
+        speed: Math.abs(speed),
+        throttle: Math.max(0, throttle),
+        harborFactor,
+        inBoat: true,
+        active: true,
+      });
     }
 
-    this._updateWake(fd);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -517,6 +581,8 @@ export class Engine {
     this.vegetation.dispose();
     this.trash.dispose();
     this.harbour?.dispose();
+    this.effects?.dispose();
+    this.boatAudio?.dispose();
     AssetManager.dispose();
     GameState.dispose();
 
@@ -537,6 +603,8 @@ export class Engine {
     if (this.harbour) return;
     this.waterFollowsCamera = false;
     this.harbour = new HarbourManager(this.scene, this.colliders, this.wallColliders);
+    // Keep the wave field's calm centre on the actual harbour.
+    this.waveSampler.setHarborCenter(WorldConfig.HARBOUR_CENTER[0], WorldConfig.HARBOUR_CENTER[1]);
     this.character.setPosition(...this.harbour.playerSpawn);
 
     // A procedural sailboat keeps the gameplay-facing direction and the
@@ -825,7 +893,7 @@ export class Engine {
     this.trash?.rebase(offset);
     this.chunks?.rebase(); // flat seabed reloads invisibly next chunks.update()
     this.camera_ctrl?.rebase(offset);
-    this._wakePoints?.forEach(p => p.sub(offset));
+    this.effects?.rebase(offset);
     // Water and sky follow the camera — sync them to the rebased camera now so
     // the horizon does not lag one frame behind during the rebase.
     if (this.water) { this.water.position.x = this.camera.position.x; this.water.position.z = this.camera.position.z; }
@@ -833,103 +901,9 @@ export class Engine {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  //  Boat wake (world-anchored foam trail)
+  //  Boat wake & water effects
+  //  Moved to src/player/BoatEffects.js (pooled wake + propeller bubbles +
+  //  side splashes). Engine calls effects.update() in the BOAT render path and
+  //  effects.rebase() during floating-origin shifts.
   // ──────────────────────────────────────────────────────────────────────────
-
-  /**
-   * A short ribbon of foam left behind the stern. It lives in WORLD space (it
-   * does not follow the camera), so while the boat is under way the player
-   * clearly sees the wake streaming away behind them — a constant motion cue
-   * that keeps the sail feeling alive even on the featureless open ocean where
-   * water, sky and seabed all follow the camera.
-   */
-  _createWake() {
-    const MAX = 80;
-    this._wakePoints = [];
-    // Scratch objects reused every frame (avoids ~160 allocations/frame).
-    this._wakeStern = new THREE.Vector3();
-    this._wakeDir   = new THREE.Vector3();
-    this._wakePerp  = new THREE.Vector3();
-    this._wakeColor = new THREE.Color();
-    this._wakeGeom = new THREE.BufferGeometry();
-    this._wakeGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX * 2 * 3), 3));
-    this._wakeGeom.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(MAX * 2 * 3), 3));
-    const idx = [];
-    for (let i = 0; i < MAX - 1; i++) {
-      const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
-      idx.push(a, c, b, b, c, d);
-    }
-    this._wakeGeom.setIndex(idx);
-    this._wakeGeom.setDrawRange(0, 0);
-    this._wakeMesh = new THREE.Mesh(
-      this._wakeGeom,
-      new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.55,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      })
-    );
-    this._wakeMesh.renderOrder = 5;
-    this._wakeMesh.frustumCulled = false;
-    this._wakeMesh.visible = false;
-    this.scene.add(this._wakeMesh);
-  }
-
-  _updateWake(frameDelta) {
-    if (!this._wakeMesh || !this._wakeGeom) return;
-    const isBoat = GameState.is('BOAT') && this.boat && this.boatController;
-    if (!isBoat || Math.abs(this.boatController.speed) < 0.4) {
-      // Hidden — drop stale world-space points so the trail never "teleports"
-      // when the boat stops and later accelerates again.
-      if (this._wakeMesh.visible) {
-        this._wakeMesh.visible = false;
-        this._wakePoints.length = 0;
-        this._wakeGeom.setDrawRange(0, 0);
-      }
-      return;
-    }
-    this._wakeMesh.visible = true;
-
-    // Stern world position (boat faces local -Z, so the stern is local +Z).
-    this._wakeStern.set(0, 0, 1.9).applyQuaternion(this.boat.quaternion).add(this.boat.position);
-    this._wakeStern.y = (this.water ? this.water.position.y : 0) + 0.1; // just above the waterline
-
-    const last = this._wakePoints[0];
-    if (!last || last.distanceTo(this._wakeStern) > 0.35) {
-      this._wakePoints.unshift(this._wakeStern.clone());
-      if (this._wakePoints.length > 80) this._wakePoints.pop();
-    }
-
-    const n = this._wakePoints.length;
-    const posAttr = this._wakeGeom.attributes.position;
-    const colAttr = this._wakeGeom.attributes.color;
-    const pos = posAttr.array;
-    const col = colAttr.array;
-    if (n < 2) { this._wakeGeom.setDrawRange(0, 0); return; }
-
-    for (let i = 0; i < n; i++) {
-      const p = this._wakePoints[i];
-      const nxt = this._wakePoints[Math.min(i + 1, n - 1)];
-      this._wakeDir.subVectors(nxt, p);
-      this._wakePerp.set(-this._wakeDir.z, 0, this._wakeDir.x);
-      if (this._wakePerp.lengthSq() < 1e-6) this._wakePerp.set(1, 0, 0);
-      this._wakePerp.normalize().multiplyScalar(0.55);
-
-      const li = i * 6;
-      pos[li]     = p.x + this._wakePerp.x; pos[li + 1] = p.y; pos[li + 2]     = p.z + this._wakePerp.z;
-      pos[li + 3] = p.x - this._wakePerp.x; pos[li + 4] = p.y; pos[li + 5]     = p.z - this._wakePerp.z;
-
-      // Foam fades from white at the stern to dark water-blue at the tail.
-      const f = 1 - i / (n - 1);
-      this._wakeColor.setHSL(0.55, 0.6, 0.18 + 0.82 * f);
-      col[li] = col[li + 3] = this._wakeColor.r;
-      col[li + 1] = col[li + 4] = this._wakeColor.g;
-      col[li + 2] = col[li + 5] = this._wakeColor.b;
-    }
-    posAttr.needsUpdate = true;
-    colAttr.needsUpdate = true;
-    this._wakeGeom.setDrawRange(0, (n - 1) * 6);
-  }
 }

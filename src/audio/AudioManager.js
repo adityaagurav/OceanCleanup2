@@ -2,6 +2,7 @@
 class SoundController {
   constructor() {
     this.ctx = null;
+    this.master = null; // shared master gain — one mute/volume for ALL audio
     this.muted = false;
     this.volume = 0.7;
   }
@@ -11,16 +12,38 @@ class SoundController {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.muted ? 0 : this.volume;
+        this.master.connect(this.ctx.destination);
       }
     }
   }
 
+  /**
+   * Shared AudioContext (created lazily). Continuous systems such as the boat
+   * audio controller connect their nodes into the master gain so the UI
+   * mute/volume toggles affect everything at once.
+   * @returns {AudioContext|null}
+   */
+  getContext() {
+    this.init();
+    return this.ctx;
+  }
+
+  /** Shared master gain node (all audio routes through it). */
+  getMaster() {
+    this.init();
+    return this.master;
+  }
+
   setMuted(muted) {
     this.muted = muted;
+    if (this.master) this.master.gain.value = muted ? 0 : this.volume;
   }
 
   setVolume(vol) {
     this.volume = vol;
+    if (this.master && !this.muted) this.master.gain.value = vol;
   }
 
   playCollectSound() {
@@ -41,7 +64,7 @@ class SoundController {
       gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
 
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.master || this.ctx.destination);
 
       osc.start(now);
       osc.stop(now + 0.15);
@@ -68,7 +91,7 @@ class SoundController {
       gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
 
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.master || this.ctx.destination);
 
       osc.start(now);
       osc.stop(now + 0.08);

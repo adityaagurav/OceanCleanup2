@@ -1501,7 +1501,7 @@ export class HarbourManager {
     this.playerSpawn.sub(offset);
   }
 
-  update(delta, nightFactor = 1.0, cameraPos = null) {
+  update(delta, nightFactor = 1.0, cameraPos = null, waveSampler = null) {
     const time = performance.now() * 0.001;
 
     // ── Distance LOD ────────────────────────────────────────────────────────
@@ -1554,9 +1554,16 @@ export class HarbourManager {
     }
 
     // Drifting trash bobs and spins on the water (skip LOD-hidden items).
+    // When a shared WaveSampler is provided the items ride the SAME field as
+    // the player's boat, so harbour buoys and trash move with the real water.
     for (const f of this._floating) {
       if (!f.mesh.visible) continue;
-      f.mesh.position.y = f.baseY + Math.sin(time * f.speed + f.phase) * 0.07;
+      if (waveSampler) {
+        const h = waveSampler.getHeight(f.x, f.z, time);
+        f.mesh.position.y = h + f.baseY + Math.sin(time * f.speed + f.phase) * 0.05;
+      } else {
+        f.mesh.position.y = f.baseY + Math.sin(time * f.speed + f.phase) * 0.07;
+      }
       f.mesh.rotation.y += delta * 0.5;
     }
 
@@ -2245,7 +2252,7 @@ export class HarbourManager {
     g.userData.noMerge = true; // bobs on the water — skip static merge
     this.root.add(g);
     this._lod.push({ obj: g, x, z, max: 110 });
-    this._floating.push({ mesh: g, baseY: 0.15, phase: Math.random() * 6, speed: 1 + Math.random() });
+    this._floating.push({ mesh: g, x, z, baseY: 0.15, phase: Math.random() * 6, speed: 1 + Math.random() });
   }
 
   _floatingTrash(x, z, M) {
@@ -2297,7 +2304,7 @@ export class HarbourManager {
     mesh.userData.noMerge = true; // drifts on the water — skip static merge
     this.root.add(mesh);
     this._lod.push({ obj: mesh, x, z, max: 85 });
-    this._floating.push({ mesh, baseY: 0.12, phase: Math.random() * 6, speed: 0.8 + Math.random() });
+    this._floating.push({ mesh, x, z, baseY: 0.12, phase: Math.random() * 6, speed: 0.8 + Math.random() });
   }
 
   _palmTree(x, z, scale, M) {

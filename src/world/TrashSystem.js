@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { AssetManager } from '../engine/AssetManager.js';
 import { WorldConfig }  from '../config/WorldConfig.js';
 import { PerformanceConfig } from '../config/PerformanceConfig.js';
+import { BoatConfig }   from '../config/BoatConfig.js';
 
 /**
  * TrashSystem.js — Manages trash spawning, proximity detection, and reel pickup.
@@ -94,7 +95,7 @@ export class TrashSystem {
     if (closest) {
       this.nearItem = closest;
       this._ring.position.copy(closest.position);
-      this._ring.position.y = 0.3;
+      this._ring.position.y = closest.position.y + 0.35; // track the bobbed item
       this._ring.rotation.z += 0.05;
       this._ring.visible = true;
       this.callbacks.onNearTrash?.(true);
@@ -116,6 +117,60 @@ export class TrashSystem {
     for (const t of this.trashes) {
       if (t.isBeingReeled) continue; // mid-pickup animation — keep drawing
       t.visible = t.position.distanceToSquared(playerPos) < this._cullRadiusSq;
+    }
+  }
+
+  /**
+   * Floating trash: each item rides the shared wave field with its OWN random
+   * Perlin-synced phase, bob speed, spin and a tiny drift, so no two pieces
+   * ever move alike. When the boat passes within TRASH_WAKE.RADIUS the item
+   * accumulates a small outward push velocity (procedural, no physics) that
+   * decays over time — so trash visibly drifts away from the hull and gently
+   * settles back.
+   * @param {number} dt
+   * @param {object} sampler - WaveSampler
+   * @param {number} time - shared wave clock (s)
+   * @param {number} boatSpeed - signed boat speed (m/s)
+   * @param {THREE.Object3D|null} boat - boat group (null in non-boat contexts)
+   */
+  updateFloating(dt, sampler, time, boatSpeed = 0, boat = null) {
+    const TW = BoatConfig.TRASH_WAKE;
+    const speedFactor = Math.min(1, Math.abs(boatSpeed) / BoatConfig.MAX_SPEED);
+    const radiusSq = TW.RADIUS * TW.RADIUS;
+    const decay = Math.exp(-TW.DECAY * dt);
+
+    for (const t of this.trashes) {
+      if (t.isBeingReeled || !t.visible) continue;
+      const f = t.userData.float;
+      if (!f) continue;
+
+      // Wake push: while the boat is close, accumulate outward velocity scaled
+      // by proximity (squared falloff) and hull speed.
+      if (boat && speedFactor > 0.05) {
+        const dx = t.position.x - boat.position.x;
+        const dz = t.position.z - boat.position.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < radiusSq && d2 > 0.01) {
+          const d = Math.sqrt(d2);
+          const fall = 1 - d / TW.RADIUS;
+          const push = fall * fall * speedFactor * TW.STRENGTH;
+          f.pushX += (dx / d) * push * dt;
+          f.pushZ += (dz / d) * push * dt;
+        }
+      }
+
+      // Decay the push velocity, then apply it along with the tiny drift.
+      f.pushX *= decay;
+      f.pushZ *= decay;
+      t.position.x += (f.driftX + f.pushX) * dt;
+      t.position.z += (f.driftZ + f.pushZ) * dt;
+      t.rotation.y += f.rotSpeed * dt;
+
+      // Bob on the shared wave field, plus a unique Perlin-ish sine wobble so
+      // items never sit on the same phase.
+      const h = sampler.getHeight(t.position.x, t.position.z, time);
+      const bob = Math.sin(time * f.bobSpeed + f.phase) * 0.05 * f.amp;
+      t.position.y = h - 0.3 + bob;
     }
   }
 
@@ -277,5 +332,18 @@ export class TrashSystem {
     }
 
     obj.position.set(px, -0.3, pz);
+
+    // Per-item floating personality: unique phase, bob speed, spin, drift and
+    // the wake-push velocity the boat's passing adds (decays over time).
+    obj.userData.float = {
+      phase:    Math.random() * Math.PI * 2,
+      bobSpeed: 0.6 + Math.random() * 0.9,
+      rotSpeed: (Math.random() - 0.5) * 0.5,
+      driftX:   (Math.random() - 0.5) * 0.05,
+      driftZ:   (Math.random() - 0.5) * 0.05,
+      amp:      0.4 + Math.random() * 0.6,
+      pushX:    0,
+      pushZ:    0,
+    };
   }
 }

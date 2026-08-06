@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GraphicsConfig } from '../config/GraphicsConfig.js';
+import { BoatConfig } from '../config/BoatConfig.js';
 
 /**
  * CameraController.js — Spring-interpolated third-person follow camera.
@@ -52,6 +53,12 @@ export class CameraController {
     this._springPos   = new THREE.Vector3();
     this._initialized = false;
 
+    // Boat-feel state: smoothed camera roll (into turns), smoothed speed FOV,
+    // and a scratch vector.
+    this._camRoll = 0;
+    this._fov     = GraphicsConfig.FOV;
+    this._tmpV    = new THREE.Vector3();
+
     this.domElement.addEventListener('click', () => this.domElement.requestPointerLock());
   }
 
@@ -61,8 +68,14 @@ export class CameraController {
    * @param {number} _charYaw — intentionally ignored (see design note above)
    * @param {InputManager} input
    * @param {number} frameDelta
+   * @param {object|null} boatFeel — optional feel layer for boat mode:
+   *   { bob: wave bob height (m), roll: target camera roll (rad), pitch: boat
+   *   pitch (rad, positive = bow up), delay: spring stiffness multiplier }.
+   *   All offsets are tiny and spring-smoothed so they read as a heavy hull,
+   *   never motion sickness. null keeps the character camera behaviour
+   *   identical (and eases any leftover boat roll back to zero).
    */
-  update(charPosition, _charYaw, input, frameDelta) {
+  update(charPosition, _charYaw, input, frameDelta, boatFeel = null) {
     if (!charPosition) return;
 
     // ── 1. Mouse input: adjust ABSOLUTE camera yaw/elevation ────────
@@ -79,6 +92,19 @@ export class CameraController {
     this._distance += mouse.scroll * ZOOM_SENSITIVITY;
     this._distance  = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, this._distance));
 
+    // ── 1b. Boat feel: yaw trail — while the hull turns, drift the camera's
+    //         orbit angle toward the boat's heading (partially + slowly), so
+    //         the view trails the turn like it's attached to a heavy hull.
+    //         Applied BEFORE the ideal position is computed. Mouse input
+    //         adjusts _camYaw first, so it always wins when the player looks.
+    if (boatFeel && boatFeel.yaw != null) {
+      let diff = boatFeel.yaw - this._camYaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const ky = 1 - Math.exp(-BoatConfig.CAMERA.YAW_LAG_RESPONSE * frameDelta);
+      this._camYaw += diff * ky * BoatConfig.CAMERA.YAW_LAG_AMOUNT;
+    }
+
     // ── 2. Compute ideal camera position ────────────────────────────
     const cosE = Math.cos(this._elevation);
     const sinE = Math.sin(this._elevation);
@@ -93,6 +119,12 @@ export class CameraController {
     const lookAt  = charPosition.clone();
     lookAt.y     += this._lookAtHeightOffset;
 
+    // Boat feel: tiny vertical bob + pitch-from-acceleration on the look-at.
+    if (boatFeel) {
+      lookAt.y += (boatFeel.bob || 0) + (boatFeel.pitch || 0) * BoatConfig.CAMERA.PITCH_AMOUNT;
+    }
+    if (lookAt.y < 0.2) lookAt.y = 0.2; // never look below the waterline
+
     const idealPos = lookAt.clone().add(offset);
     if (idealPos.y < 0.5) idealPos.y = 0.5; // never clip into water
 
@@ -102,11 +134,37 @@ export class CameraController {
       this._initialized = true;
     }
 
-    const t = 1 - Math.exp(-SPRING_FACTOR * frameDelta);
+    // Boat mode adds a tiny extra lag so the camera feels attached to a heavy
+    // hull instead of glued to it.
+    const lag = boatFeel?.delay ?? 1;
+    const t = 1 - Math.exp(-SPRING_FACTOR * lag * frameDelta);
     this._springPos.lerp(idealPos, t);
 
     this.camera.position.copy(this._springPos);
     this.camera.lookAt(lookAt);
+
+    // ── 4. Boat feel: roll into turns (smoothed) ───────────────────
+    // lookAt() resets orientation every frame, so we simply re-apply the
+    // smoothed roll around the camera's own forward axis each frame.
+    const targetRoll = boatFeel?.roll ?? 0;
+    const kR = 1 - Math.exp(-BoatConfig.CAMERA.ROLL_RESPONSE * frameDelta);
+    this._camRoll += (targetRoll - this._camRoll) * kR;
+    if (Math.abs(this._camRoll) > 0.0005) {
+      const fwd = this._tmpV.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+      this.camera.rotateOnAxis(fwd, this._camRoll);
+    }
+
+    // ── 5. Boat feel: speed FOV widening (subtle) ──────────────────
+    // The view opens up a few degrees at full throttle, easing back to the
+    // base FOV at idle / in character mode. Cheap: one projection update.
+    const targetFov = GraphicsConfig.FOV
+      + (boatFeel ? (boatFeel.speedFactor || 0) * BoatConfig.CAMERA.FOV_BOOST : 0);
+    const kF = 1 - Math.exp(-BoatConfig.CAMERA.FOV_RESPONSE * frameDelta);
+    this._fov += (targetFov - this._fov) * kF;
+    if (Math.abs(this.camera.fov - this._fov) > 0.01) {
+      this.camera.fov = this._fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   /**

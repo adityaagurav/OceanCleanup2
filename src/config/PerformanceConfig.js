@@ -37,4 +37,9 @@ export const PerformanceConfig = {
   // at 600 m is invisible to gameplay but removes hundreds of draw calls
   // while sailing the open ocean.
   TRASH_CULL_RADIUS: 600,
+
+  // ── Water effects (BoatEffects) ────────────────────────────────
+  // Total pooled particle budget for propeller bubbles, foam and side splashes
+  // (one shared GPU point pool, never allocated during gameplay).
+  WATER_EFFECT_PARTICLES: 220,
 };

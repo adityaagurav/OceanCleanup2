@@ -14,15 +14,26 @@ import React, { useState, useEffect, useRef } from 'react';
 export function DebugOverlay({ engineRef }) {
   const [visible,  setVisible]  = useState(false);
   const [stats,    setStats]    = useState(null);
+  const [buoyDebug, setBuoyDebug] = useState(false);
   const frameRef   = useRef(null);
   const fpsCounter = useRef({ frames: 0, last: performance.now(), fps: 0 });
 
-  // Toggle on F3
+  // Toggle on F3; F4 toggles the buoyancy float-point/axes debug overlay.
   useEffect(() => {
-    const onKey = (e) => { if (e.code === 'F3') { e.preventDefault(); setVisible(v => !v); } };
+    const onKey = (e) => {
+      if (e.code === 'F3') { e.preventDefault(); setVisible(v => !v); }
+      if (e.code === 'F4') {
+        e.preventDefault();
+        setBuoyDebug(prev => {
+          const next = !prev;
+          engineRef?.current?.buoyancy?.setDebug(next);
+          return next;
+        });
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [engineRef]);
 
   // Poll stats every frame only when visible
   useEffect(() => {
@@ -116,9 +127,10 @@ export function DebugOverlay({ engineRef }) {
         <Row label="Camera"      value={`${stats.camX}, ${stats.camY}, ${stats.camZ}`} />
         <Row label="Colliders"   value={stats.colliders} />
         <Row label="Trash left"  value={stats.trashLeft} />
+        <Row label="Buoyancy"    value={buoyDebug ? 'DEBUG ON' : 'off'} highlight={buoyDebug} />
 
         <div className="border-t border-white/10 pt-1 mt-1">
-          <span className="text-slate-500">Press F3 to hide</span>
+          <span className="text-slate-500">F3 debug · F4 buoyancy overlay</span>
         </div>
       </div>
     </div>
