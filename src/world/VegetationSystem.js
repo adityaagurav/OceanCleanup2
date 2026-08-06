@@ -17,6 +17,11 @@ export class VegetationSystem {
     
     // modelPath -> Map<chunkKey, Matrix4[]>
     this._chunkData = new Map();
+
+    // Model paths whose InstancedMesh needs rebuilding (adds/removes are
+    // debounced so each model type is rebuilt at most once per frame instead
+    // of once per chunk).
+    this._dirty = new Set();
     
     this._dummy = new THREE.Object3D();
   }
@@ -53,13 +58,17 @@ export class VegetationSystem {
    * @param {string} chunkKey (e.g., "1,2")
    * @param {string} path 
    * @param {Array<{pos: THREE.Vector3, rotY: number, scale: number}>} placements
+   * @param {function(): boolean} [isStillActive] - optional predicate; when the
+   *   model takes time to load, the placements are only stored if the chunk is
+   *   still active (prevents ghost data for chunks unloaded mid-load).
    */
-  async addChunkVegetation(chunkKey, path, placements) {
+  async addChunkVegetation(chunkKey, path, placements, isStillActive = null) {
     if (placements.length === 0) return;
     
     // Ensure model is loaded
     if (!this._models.has(path)) {
       await this.prepareModel(path);
+      if (isStillActive && !isStillActive()) return; // chunk gone while loading
     }
     
     // Convert placements to Matrix4 array immediately
@@ -73,7 +82,7 @@ export class VegetationSystem {
     });
 
     this._chunkData.get(path).set(chunkKey, matrices);
-    this._rebuildInstancedMesh(path);
+    this._dirty.add(path);
   }
 
   /**
@@ -83,9 +92,22 @@ export class VegetationSystem {
     for (const [path, chunkMap] of this._chunkData.entries()) {
       if (chunkMap.has(chunkKey)) {
         chunkMap.delete(chunkKey);
-        this._rebuildInstancedMesh(path);
+        this._dirty.add(path);
       }
     }
+  }
+
+  /**
+   * Rebuild every dirty InstancedMesh exactly once. Called by the chunk
+   * manager once per frame after its streaming budget is spent — this keeps
+   * the rebuild cost bounded per frame even while many chunks are loading.
+   */
+  flushRebuilds() {
+    if (this._dirty.size === 0) return;
+    for (const path of this._dirty) {
+      if (this._models.has(path)) this._rebuildInstancedMesh(path);
+    }
+    this._dirty.clear();
   }
 
   /**
@@ -113,7 +135,7 @@ export class VegetationSystem {
       const mesh = new THREE.InstancedMesh(model.geo, model.mat, newCapacity);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.frustumCulled = false; // Prevent disappearing when looking away from origin
+      mesh.frustumCulled = true; // enabled after computeBoundingSphere() below
       
       this.scene.add(mesh);
       model.mesh = mesh;
@@ -131,6 +153,11 @@ export class VegetationSystem {
     // Set actual draw count
     model.mesh.count = totalInstances;
     model.mesh.instanceMatrix.needsUpdate = true;
+
+    // Recompute the bounding sphere from the instance matrices so the mesh is
+    // correctly frustum-culled (skipped entirely when every instance is off
+    // screen) instead of being forced to draw every frame.
+    model.mesh.computeBoundingSphere();
   }
 
   dispose() {

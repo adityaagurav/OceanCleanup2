@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
 import { BiomeManager, Biomes } from './BiomeManager.js';
+import { PerformanceConfig } from '../config/PerformanceConfig.js';
 
 /**
  * TerrainGenerator.js — Generates procedural geometry for chunks using Simplex noise.
@@ -10,7 +11,9 @@ export class TerrainGenerator {
     this.noise2D = createNoise2D(); // Random seed by default
     this.moistureNoise2D = createNoise2D();
     
-    this.chunkSize = 64; // Meters
+    // Chunk size is owned by PerformanceConfig so the whole world streams on
+    // one tunable value (ChunkManager reads it from the generator).
+    this.chunkSize = PerformanceConfig.CHUNK_SIZE; // Meters
     this.resolution = 16; // Vertices per chunk edge (lower is faster, higher is smoother)
     this.maxHeight = 12; // Maximum elevation
   }
@@ -68,10 +71,10 @@ export class TerrainGenerator {
 
     // Position the chunk mesh in world space
     mesh.position.set(cx * this.chunkSize, 0, cz * this.chunkSize);
-    
-    // Disable frustum culling on the chunks to avoid popping if they are just offscreen
-    // The ChunkManager handles adding/removing them entirely.
-    mesh.frustumCulled = false; 
+
+    // The chunk is a normal positioned mesh, so default frustum culling works
+    // correctly — off-screen chunks (most of the 7x7 grid) are skipped instead
+    // of being drawn every frame. ChunkManager still handles load/unload.
 
     return mesh;
   }

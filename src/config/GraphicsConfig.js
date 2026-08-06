@@ -4,11 +4,17 @@
 export const GraphicsConfig = {
   // ── Renderer ───────────────────────────────────────────────────
   ANTIALIAS:       true,
-  MAX_PIXEL_RATIO: 2,
+  // Cap the pixel ratio at 1.5: on Retina displays (DPR 2) this cuts the
+  // framebuffer from 4x to ~2.25x the CSS pixels — the single biggest GPU
+  // win with an almost imperceptible sharpness change.
+  MAX_PIXEL_RATIO: 1.5,
   SHADOWS_ENABLED: true,
 
   // ── Shadow map ─────────────────────────────────────────────────
-  SHADOW_MAP_SIZE: 2048,
+  // 'pcf' (cheap, softer edges) vs 'soft' (PCFSoftShadowMap — blur pass,
+  // noticeably more expensive). 1024 over the 400 m harbour is plenty.
+  SHADOW_TYPE:     'pcf',
+  SHADOW_MAP_SIZE: 1024,
   SHADOW_NEAR:     0.5,
   SHADOW_FAR:      600,
   SHADOW_EXTENT:   200, // left/right/top/bottom of shadow camera
@@ -16,7 +22,10 @@ export const GraphicsConfig = {
   // ── Camera ─────────────────────────────────────────────────────
   FOV:       60,
   NEAR:      0.3,
-  FAR:       20000,
+  // 8000 instead of 20000: fog (density 0.001) makes everything past ~1500 m
+  // invisible anyway, and the smaller far plane greatly improves depth-buffer
+  // precision and near-field fill rate.
+  FAR:       8000,
 
   // ── Third-person / First-person camera ─────────────────────────
   // Framed for a ~1.75 m player character: closer orbit + eye-height look-at

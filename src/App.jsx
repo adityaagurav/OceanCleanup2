@@ -7,6 +7,7 @@ import HUD         from './ui/HUD';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { Engine }  from './engine/Engine.js';
 import { soundFx } from './audio/AudioManager';
+import { PerformanceConfig } from './config/PerformanceConfig.js';
 
 function App() {
   const [scene, setScene]           = useState('MENU');
@@ -27,6 +28,10 @@ function App() {
   const engineRef     = useRef(null);
   const toastTimerRef = useRef(null);
   const missionToastTimerRef = useRef(null);
+  // Last speed string pushed to the HUD — lets us skip React renders when the
+  // displayed value hasn't changed (the engine reports speed every frame).
+  const lastSpeedRef   = useRef('0.0');
+  const speedDecimals  = PerformanceConfig.UI_SPEED_DECIMALS;
 
   const handleToggleSound = () => {
     const next = !soundMuted;
@@ -58,7 +63,15 @@ function App() {
             toastTimerRef.current = setTimeout(() => setPickupToast(false), 1200);
           },
           onNearTrash: (isNear) => setNearTrash(isNear),
-          onTick:      (speed)  => setBoatSpeed(speed),
+          // Perf: only re-render the HUD when the shown knots value changes
+          // (the engine pushes speed every frame; ~10 real updates/sec instead
+          // of ~60 whole-tree React re-renders/sec).
+          onTick: (speed) => {
+            const display = speed.toFixed(speedDecimals);
+            if (display === lastSpeedRef.current) return;
+            lastSpeedRef.current = display;
+            setBoatSpeed(speed);
+          },
           onMissionState: (state) => {
             setMissionState(state);
             if (state === 'started') {

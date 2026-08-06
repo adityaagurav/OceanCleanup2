@@ -1649,49 +1649,73 @@ export class HarbourManager {
    *  - textured materials (signs/decals carry unique canvas textures)
    */
   _mergeStatic() {
-    const groups = new Map(); // material.uuid -> { material, geoms: [], cast, receive }
+    // Two buckets:
+    //  - groups:          decorative meshes that are NOT colliders — merged and
+    //                     then removed from the scene (current behaviour).
+    //  - colliderGroups:  collider / wallCollider meshes (fences, railings,
+    //                     curbs, workshop walls, ground…) — these are also
+    //                     merged into one render mesh per shared material, and
+    //                     the ORIGINALS are hidden instead of removed. Physics
+    //                     raycasts ignore `visible`, so the collider arrays
+    //                     keep working; only the render cost collapses from
+    //                     hundreds of draw calls down to a handful.
+    const groups = new Map();         // material.uuid -> { material, geoms, cast, receive }
+    const colliderGroups = new Map();
     const remove = [];
     const visit = (obj) => {
       if (obj.userData && obj.userData.noMerge) return; // animated groups/meshes
       if (obj.isGroup) { obj.children.forEach(visit); return; }
       if (!obj.isMesh) return;                 // lines, lights, targets, …
-      if (this.colliders.includes(obj) || this.wallColliders.includes(obj)) return;
+      if (obj.visible === false) return;       // invisible physics walls — nothing to render
       const mat = obj.material;
       if (!mat || mat.map || mat.wireframe || mat.transparent) return;
-      let g = groups.get(mat.uuid);
+      const isCollider = this.colliders.includes(obj) || this.wallColliders.includes(obj);
+      const bucket = isCollider ? colliderGroups : groups;
+      let g = bucket.get(mat.uuid);
       if (!g) {
         g = { material: mat, geoms: [], cast: false, receive: false };
-        groups.set(mat.uuid, g);
+        bucket.set(mat.uuid, g);
       }
       const geo = obj.geometry.clone();
       geo.applyMatrix4(obj.matrixWorld);
       g.geoms.push(geo);
       g.cast = g.cast || obj.castShadow;
       g.receive = g.receive || obj.receiveShadow;
-      remove.push(obj);
+      if (isCollider) {
+        // Keep it in the collider arrays for raycasting (which ignores
+        // `visible`), but stop drawing the original — the merged copy renders.
+        obj.visible = false;
+      } else {
+        remove.push(obj);
+      }
     };
     this.root.updateMatrixWorld(true);
     this.root.children.forEach(visit);
 
-    for (const { material, geoms, cast, receive } of groups.values()) {
-      if (geoms.length < 2) { geoms.forEach(g => g.dispose()); continue; }
-      let merged = null;
-      try {
-        merged = mergeBufferGeometries(geoms, false);
-      } catch (e) {
+    const bake = (entries) => {
+      for (const { material, geoms, cast, receive } of entries) {
+        if (geoms.length < 2) { geoms.forEach(g => g.dispose()); continue; }
+        let merged = null;
+        try {
+          merged = mergeBufferGeometries(geoms, false);
+        } catch (e) {
+          geoms.forEach(g => g.dispose());
+          continue;
+        }
+        if (!merged) { geoms.forEach(g => g.dispose()); continue; }
         geoms.forEach(g => g.dispose());
-        continue;
+        merged.computeBoundingSphere();
+        const mesh = new THREE.Mesh(merged, material);
+        mesh.castShadow = cast;
+        mesh.receiveShadow = receive;
+        this.root.add(mesh);
+        this._merged.push(mesh);
       }
-      if (!merged) { geoms.forEach(g => g.dispose()); continue; }
-      geoms.forEach(g => g.dispose());
-      merged.computeBoundingSphere();
-      const mesh = new THREE.Mesh(merged, material);
-      mesh.castShadow = cast;
-      mesh.receiveShadow = receive;
-      this.root.add(mesh);
-      this._merged.push(mesh);
-    }
-    // Remove the source meshes (they were rendered by the merged mesh now).
+    };
+    bake(groups.values());
+    bake(colliderGroups.values());
+
+    // Remove the non-collider source meshes (rendered by the merged mesh now).
     for (const obj of remove) {
       if (!this._sharedGeos.has(obj.geometry)) obj.geometry.dispose();
       obj.parent.remove(obj);

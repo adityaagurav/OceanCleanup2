@@ -30,6 +30,7 @@ import { AssetManager }        from './AssetManager.js';
 import { GameState }           from './GameStateManager.js';
 import { GraphicsConfig }      from '../config/GraphicsConfig.js';
 import { WorldConfig }         from '../config/WorldConfig.js';
+import { PerformanceConfig }   from '../config/PerformanceConfig.js';
 
 export class Engine {
   constructor(container, callbacks = {}, options = {}) {
@@ -80,12 +81,27 @@ export class Engine {
     const w = this.container.clientWidth  || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: GraphicsConfig.ANTIALIAS });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, GraphicsConfig.MAX_PIXEL_RATIO));
+    // `powerPreference: 'high-performance'` makes dual-GPU laptops (most Macs)
+    // pick the discrete GPU instead of the weak integrated one.
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: GraphicsConfig.ANTIALIAS,
+      powerPreference: 'high-performance',
+    });
+    // Adaptive resolution governor: start at 1.0 and let the frame-time meter
+    // push the pixel ratio up (fast machines) or down (weak GPUs) so the game
+    // stays smooth everywhere instead of lagging at a fixed ratio.
+    this._resScale = {
+      target: 1.0,
+      min: 0.65,
+      max: Math.min(window.devicePixelRatio, GraphicsConfig.MAX_PIXEL_RATIO),
+      acc: 0,
+      frames: 0,
+    };
+    this.renderer.setPixelRatio(this._resScale.target);
     this.renderer.setSize(w, h);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = GraphicsConfig.SHADOWS_ENABLED;
-    this.renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type    = GraphicsConfig.SHADOW_TYPE === 'soft' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.container.appendChild(this.renderer.domElement);
   }
 
@@ -125,8 +141,12 @@ export class Engine {
   }
 
   _initWorld() {
-    // Chunks + vegetation
-    this.chunks = new ChunkManager(this.scene, this.colliders, this.vegetation);
+    // Chunks + vegetation (streaming distances come from PerformanceConfig)
+    this.chunks = new ChunkManager(this.scene, this.colliders, this.vegetation, {
+      viewDistance:    PerformanceConfig.CHUNK_VIEW_DISTANCE,
+      unloadDistance:  PerformanceConfig.CHUNK_UNLOAD_DISTANCE,
+      preloadDistance: PerformanceConfig.CHUNK_PRELOAD_DISTANCE,
+    });
     
     // Spawn the player on the harbour pier (the only landmass at the start).
     // _setupHarbor repositions onto the exact pier coordinates once it runs.
@@ -140,7 +160,10 @@ export class Engine {
     this.trash = new TrashSystem(this.scene, {
       onCollect:    (newScore, newCount) => { if (this.missionActive) this.callbacks.onCollect?.(newScore, newCount); },
       onNearTrash:  (isNear) => { if (this.missionActive) this.callbacks.onNearTrash?.(isNear); },
-    }, this.options);
+    }, {
+      ...this.options,
+      cullRadius: PerformanceConfig.TRASH_CULL_RADIUS,
+    });
     this.trash.start();
   }
 
@@ -251,8 +274,8 @@ export class Engine {
     });
 
     this.water = new Water(geo, {
-      textureWidth:    512,
-      textureHeight:   512,
+      textureWidth:    256,
+      textureHeight:   256,
       waterNormals:    normals,
       sunDirection:    new THREE.Vector3(0.5, 0.8, 0.3).normalize(),
       sunColor:        0xffffff,
@@ -264,6 +287,25 @@ export class Engine {
     this.water.material.transparent = true;
     this.water.rotation.x = -Math.PI / 2;
     this.scene.add(this.water);
+
+    // Perf: the Water shader re-renders the ENTIRE scene into a reflection
+    // render-target once per frame. Refreshing every Nth frame divides that
+    // GPU cost with no visible difference on calm cartoon water (a 1-frame-old
+    // reflection is indistinguishable), while the `time` uniform still
+    // animates every frame in _render. Set WATER_REFRESH_INTERVAL = 1 to
+    // restore the original every-frame behaviour.
+    if (PerformanceConfig.WATER_REFRESH_INTERVAL > 1) {
+      const origBeforeRender = this.water.onBeforeRender;
+      let waterFrame = 0;
+      this.water.onBeforeRender = (renderer, scene, camera) => {
+        // Always refresh on the first frame (RT starts uninitialized), then
+        // every Nth frame. The counter increments on EVERY call so the modulo
+        // stays in sync with the real frame cadence.
+        const frame = waterFrame++;
+        if (frame > 0 && frame % PerformanceConfig.WATER_REFRESH_INTERVAL !== 0) return;
+        origBeforeRender(renderer, scene, camera);
+      };
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -306,8 +348,46 @@ export class Engine {
     }
   }
 
+  /**
+   * Adaptive resolution governor — the "self-tuning" render scale.
+   *
+   * Samples a rolling ~0.5 s window of real frame times and nudges the pixel
+   * ratio one step at a time: drop when frames are slow, raise when there is
+   * headroom. This keeps the game smooth on weak GPUs (smaller framebuffer =
+   * fewer pixels for the water shader and everything else) while still using
+   * full quality on strong machines.
+   */
+  _applyAdaptiveResolution(frameDelta) {
+    const s = this._resScale;
+    s.acc += frameDelta;
+    s.frames += 1;
+    if (s.acc < 0.5) return;
+
+    const avg = s.acc / s.frames;
+    s.acc = 0;
+    s.frames = 0;
+
+    let next = s.target;
+    if (avg > 0.021) {           // under ~47 fps → scale down
+      next = Math.max(s.min, s.target - 0.25);
+    } else if (avg < 0.014) {    // over ~70 fps → scale up
+      next = Math.min(s.max, s.target + 0.25);
+    }
+    if (next === s.target) return;
+
+    s.target = next;
+    this.renderer.setPixelRatio(next);
+    this.renderer.setSize(
+      this.container.clientWidth  || window.innerWidth,
+      this.container.clientHeight || window.innerHeight
+    );
+  }
+
   _render(alpha, fd) {
     if (!GameState.is('HARBOR') && !GameState.is('BOAT')) return;
+
+    // Keep the render scale tuned to the machine before drawing this frame.
+    this._applyAdaptiveResolution(fd);
 
     if (this.water) {
       this.water.material.uniforms['time'].value += fd;
@@ -335,10 +415,24 @@ export class Engine {
     const rebasedPos = GameState.is('HARBOR') ? this.character.getPosition() : (this.boat ? this.boat.position : playerPos);
     this.chunks.update(rebasedPos);
 
+    // Perf: hide trash too far away to matter (pickup radius is 8 m) so those
+    // meshes never enter the render list while sailing the open ocean.
+    this.trash.updateVisibility(rebasedPos);
+
     // Update time and weather (real-time local-clock day/night cycle)
     if (this.timeSystem) this.timeSystem.update(fd, this.renderer);
     const nightFactor = this.timeSystem ? this.timeSystem.getNightFactor() : 0.0;
     if (this.weatherSystem) this.weatherSystem.update(fd, nightFactor);
+
+    // Perf: when sailing far from the harbour there is nothing to shadow, yet
+    // the whole harbour would otherwise be rendered into the shadow map every
+    // frame. Skip the sun's shadow pass entirely out at sea. The TimeSystem
+    // still toggles castShadow for the day/night cycle; we only additionally
+    // gate it on proximity to the harbour (distance to the rebased harbour).
+    if (this.sunLight && this.harbour) {
+      const nearHarbour = playerPos.distanceToSquared(this.harbour.root.position) < 550 * 550;
+      this.sunLight.castShadow = this.sunLight.castShadow && nearHarbour;
+    }
 
     // Ocean reacts to the sky: point the water's sun specular at the sun (or
     // moon at night) and darken the water color so night sailing reads as night.

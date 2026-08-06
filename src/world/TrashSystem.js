@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AssetManager } from '../engine/AssetManager.js';
 import { WorldConfig }  from '../config/WorldConfig.js';
+import { PerformanceConfig } from '../config/PerformanceConfig.js';
 
 /**
  * TrashSystem.js — Manages trash spawning, proximity detection, and reel pickup.
@@ -26,6 +27,30 @@ export class TrashSystem {
     this.nearItem    = null;
     this.score       = 0;
     this.trashCount  = 0;
+
+    // Draw-call cull radius for updateVisibility(): trash beyond this distance
+    // never enters the render list. Pickup radius is 8 m, so the default 600 m
+    // is far past any gameplay relevance while large enough that items don't
+    // visibly pop in through the light fog. Configurable (see PerformanceConfig).
+    this._cullRadiusSq = (options.cullRadius ?? PerformanceConfig.TRASH_CULL_RADIUS) ** 2;
+
+    // Shared resources for the procedurally-generated trash — ONE geometry and
+    // ONE material per trash type instead of one per item (~150 items used to
+    // each create their own). Cuts memory and GPU material state changes with
+    // zero visual difference.
+    this._procGeo = [
+      new THREE.DodecahedronGeometry(0.22, 1),
+      new THREE.CylinderGeometry(0.08, 0.08, 0.45, 8),
+      new THREE.CylinderGeometry(0.11, 0.11, 0.3, 12),
+    ];
+    this._procMat = [
+      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
+      new THREE.MeshStandardMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.8, roughness: 0.4 }),
+    ];
+
+    // Shared reel-line material — pickups no longer allocate a material each.
+    this._lineMat = new THREE.LineBasicMaterial({ color: 0x00ff88, linewidth: 3 });
 
     // Proximity ring indicator (scaled down to match smaller trash)
     const ringGeo = new THREE.RingGeometry(0.45, 0.7, 32);
@@ -81,6 +106,20 @@ export class TrashSystem {
   }
 
   /**
+   * Perf: toggle mesh visibility so trash beyond CULL_RADIUS never enters the
+   * render list. The pickup radius is only 8 m, so culling at 450 m has zero
+   * gameplay impact but removes potentially hundreds of draw calls while
+   * sailing the open ocean.
+   * @param {THREE.Vector3} playerPos
+   */
+  updateVisibility(playerPos) {
+    for (const t of this.trashes) {
+      if (t.isBeingReeled) continue; // mid-pickup animation — keep drawing
+      t.visible = t.position.distanceToSquared(playerPos) < this._cullRadiusSq;
+    }
+  }
+
+  /**
    * Call each render frame for reel animation.
    * @param {THREE.Vector3} deckPos
    */
@@ -92,6 +131,9 @@ export class TrashSystem {
       if (reel.progress >= 1.0) {
         this.scene.remove(reel.trash);
         this.scene.remove(reel.line);
+        // Free the line geometry — each reel allocated its own (the material
+        // is shared). Prevents a per-pickup memory leak.
+        reel.line.geometry.dispose();
         const idx = this.trashes.indexOf(reel.trash);
         if (idx !== -1) this.trashes.splice(idx, 1);
         this.activeReels.splice(i, 1);
@@ -122,9 +164,8 @@ export class TrashSystem {
     const target = this.nearItem;
     target.isBeingReeled = true;
 
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff88, linewidth: 3 });
     const lineGeo = new THREE.BufferGeometry().setFromPoints([deckPos, target.position.clone()]);
-    const line    = new THREE.Line(lineGeo, lineMat);
+    const line    = new THREE.Line(lineGeo, this._lineMat); // shared material
     this.scene.add(line);
 
     this.activeReels.push({ trash: target, line, progress: 0, startPos: target.position.clone() });
@@ -151,7 +192,10 @@ export class TrashSystem {
   dispose() {
     this.scene.remove(this._ring);
     this.trashes.forEach(t => this.scene.remove(t));
-    this.activeReels.forEach(r => { this.scene.remove(r.line); });
+    this.activeReels.forEach(r => { this.scene.remove(r.line); r.line.geometry.dispose(); });
+    this._lineMat.dispose();
+    this._procGeo.forEach(g => g.dispose());
+    this._procMat.forEach(m => m.dispose());
   }
 
   // ── Private ──────────────────────────────────────────────────────
@@ -181,18 +225,9 @@ export class TrashSystem {
 
   _makeProceduralMesh() {
     const r = Math.random();
-    let geo, mat;
-    if (r < 0.4) {
-      geo = new THREE.DodecahedronGeometry(0.22, 1);
-      mat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
-    } else if (r < 0.7) {
-      geo = new THREE.CylinderGeometry(0.08, 0.08, 0.45, 8);
-      mat = new THREE.MeshStandardMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 });
-    } else {
-      geo = new THREE.CylinderGeometry(0.11, 0.11, 0.3, 12);
-      mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.8, roughness: 0.4 });
-    }
-    return new THREE.Mesh(geo, mat);
+    const type = r < 0.4 ? 0 : r < 0.7 ? 1 : 2;
+    // Geometries/materials are shared per type (see constructor).
+    return new THREE.Mesh(this._procGeo[type], this._procMat[type]);
   }
 
   _place(obj) {
