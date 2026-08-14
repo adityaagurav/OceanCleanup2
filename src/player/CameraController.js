@@ -179,6 +179,15 @@ export class CameraController {
   }
 
   /**
+   * Current absolute camera orbit yaw (radians) — read by the engine's HUD
+   * compass so the rose tracks the direction the camera is looking.
+   * @returns {number} radians, in (-∞, ∞) — wrap before display
+   */
+  getYaw() {
+    return this._camYaw;
+  }
+
+  /**
    * Returns the FLAT (XZ only) direction the camera is looking.
    * Used by CharacterController to compute "forward" for W key.
    * Because _camYaw is absolute, this never drifts.

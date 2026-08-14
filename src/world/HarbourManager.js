@@ -1466,10 +1466,12 @@ export class HarbourManager {
   // ── Ambient: gulls + dock lights ────────────────────────────────────────
 
   _buildAmbient(M) {
-    for (const z of [75, 88]) this._dockLight(-5.6, z, M.metal);
+    // Real lights only where the player actually docks (berth + unloading
+    // pier); the distant posts are emissive fakes — see _dockLight.
+    for (const z of [75, 88]) this._dockLight(-5.6, z, M.metal, true);
     this._dockLight(34, 74, M.metal);
     this._dockLight(-34, 74, M.metal);
-    this._dockLight(0, 100, M.metal);
+    this._dockLight(0, 100, M.metal, true);
     this._dockLight(0, 120, M.metal);
     this._dockLight(0, 140, M.metal);
     for (let i = 0; i < 12; i++) {
@@ -1783,17 +1785,34 @@ export class HarbourManager {
     this.root.add(net);
   }
 
-  /** Low pier-edge light post (5 m tall). */
-  _dockLight(x, z, material) {
+  /**
+   * Low pier-edge light post (5 m tall).
+   *
+   * Perf: every real THREE light multiplies the per-fragment cost of every
+   * harbour surface (three.js compiles the shader to loop over ALL visible
+   * lights). So `real` lights are only created where the warm pool actually
+   * matters — the few posts right beside the boat berth. Everywhere else the
+   * lamp is a cheap emissive bulb that fakes the glow with ZERO lighting cost.
+   */
+  _dockLight(x, z, material, real = false) {
     this._cylinder(material, 0.09, 0.12, 4.6, x, 2.3, z, false);
     const fixture = new THREE.Mesh(this._geo('box', 0.4, 0.2, 0.3), this.M.gray);
     fixture.position.set(x, 4.7, z - 0.4);
     this.root.add(fixture);
-    const light = new THREE.PointLight(0xffc978, 0.9, 14, 2);
-    light.position.set(x, 4.6, z - 0.4);
-    light.userData.base = 0.9;
-    this.root.add(light);
-    this._lights.push(light);
+    if (real) {
+      const light = new THREE.PointLight(0xffc978, 0.9, 14, 2);
+      light.position.set(x, 4.6, z - 0.4);
+      light.userData.base = 0.9;
+      this.root.add(light);
+      this._lights.push(light);
+    } else {
+      // Fake glow: an emissive bulb so the lamp reads as lit at night. Opaque
+      // and static, so the merge pass folds it into the shared draw calls.
+      const bulb = new THREE.Mesh(this._geo('sphere', 0.13, 6, 4),
+        new THREE.MeshBasicMaterial({ color: 0xffe9b0 }));
+      bulb.position.set(x, 4.6, z - 0.4);
+      this.root.add(bulb);
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -2384,7 +2403,14 @@ export class HarbourManager {
     this.root.add(lid);
   }
 
-  /** Industrial lamp post (7 m tall, matte dark grey, warm LED head). */
+  /**
+   * Industrial lamp post (7 m tall, matte dark grey, warm LED head).
+   *
+   * Perf: NO real light here. The harbour has dozens of these posts; each
+   * SpotLight would be evaluated per-fragment by every surface in view at
+   * night, which is the #1 cause of night-time frame drops. The emissive
+   * bulb + additive beam cone below fake the glow for free.
+   */
   _lightPole(x, z, M) {
     const poleMat = M.pole;
     this._cylinder(poleMat, 0.1, 0.16, 6.4, x, 3.2, z);
@@ -2398,17 +2424,6 @@ export class HarbourManager {
       new THREE.MeshBasicMaterial({ color: 0xffe9b0 }));
     bulb.position.set(x, 6.1, z - 1.55);
     this.root.add(bulb);
-
-    // Downward-facing SpotLight for harbor lighting
-    const light = new THREE.SpotLight(0xffeaad, 3.5, 45, Math.PI / 3, 0.6, 1.5);
-    light.position.set(x, 6.1, z - 1.55);
-    light.userData.base = 3.5;
-    const target = new THREE.Object3D();
-    target.position.set(x, 0, z - 1.55);
-    this.root.add(target);
-    light.target = target;
-    this.root.add(light);
-    this._lights.push(light);
 
     // Volumetric floodlight beam cone
     const beamGeom = new THREE.ConeGeometry(3.0, 7.0, 16, 1, true);

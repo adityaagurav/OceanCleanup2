@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sky &amp; Cloud Check (dev tool)</title>
+  <style>
+    body { margin: 0; background: #04233b; overflow: hidden; font-family: monospace; }
+    canvas { display: block; }
+    #report {
+      position: absolute; left: 10px; top: 10px; z-index: 20;
+      color: #ff9f9f; font: 12px/1.5 monospace; white-space: pre-wrap;
+      background: rgba(0, 0, 0, 0.7); padding: 8px 10px; border-radius: 8px;
+      pointer-events: none; max-width: 90ch;
+    }
+  </style>
+</head>
+<body>
+  <!-- Maps the bare "three" specifier used by three/examples/jsm modules -->
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.134.0/build/three.module.js" } }
+  </script>
+  <pre id="report" style="display:none"></pre>
+  <script type="module">
+    document.title = 'SCRIPT-START';
+    const report = (msg) => {
+      const r = document.getElementById('report');
+      r.style.display = 'block';
+      r.textContent += '\n' + msg;
+    };
+    window.addEventListener('error', (e) => report('[page] ' + e.message + ' @ ' + (e.filename || '') + ':' + e.lineno));
+
+    try {
+      const THREE = await import('https://unpkg.com/three@0.134.0/build/three.module.js');
+      const { Sky } = await import('https://unpkg.com/three@0.134.0/examples/jsm/objects/Sky.js');
+      const { mergeBufferGeometries } = await import('https://unpkg.com/three@0.134.0/examples/jsm/utils/BufferGeometryUtils.js');
+      document.title = 'IMPORTS-OK';
+      await main(THREE, Sky, mergeBufferGeometries);
+    } catch (err) {
+      report('[fatal] ' + (err && err.stack || err));
+    }
+
+    async function main(THREE, Sky, mergeBufferGeometries) {
+    // ── Query-driven sky params (defaults = current in-game values) ──────
+    const q = new URLSearchParams(location.search);
+    const num = (k, d) => { const v = parseFloat(q.get(k)); return isNaN(v) ? d : v; };
+    const P = {
+      turbidity: num('turbidity', 4),
+      rayleigh:  num('rayleigh', 3),
+      mie:       num('mie', 0.005),
+      g:         num('g', 0.8),
+      elev:      num('elev', 65),   // sun elevation, degrees
+      azim:      num('azim', 220),  // sun azimuth, degrees (0 = +Z)
+      yaw:       num('yaw', 220),   // camera yaw, degrees
+      pitch:     num('pitch', 4),   // camera pitch above horizon, degrees
+      night:     num('night', 0),   // 1 = force night tint
+      moon:      num('moon', 0),    // 1 = show moon at night
+      enc:       num('enc', 0),     // 1 = sRGB output encoding (r134 fix)
+      sky:       q.get('sky') || 'three', // 'three' | 'custom'
+      // custom-sky palette knobs (display values; defaults = game GraphicsConfig)
+      dz:        (q.get('dz') || '2e6fc3').replace('#', ''), // day zenith
+      dh:        (q.get('dh') || 'cce0ff').replace('#', ''), // day horizon (= day fog)
+      nz:        (q.get('nz') || '04070f').replace('#', ''), // night zenith
+      nh:        (q.get('nh') || '0a1526').replace('#', ''), // night horizon (= night fog)
+    };
+    const hex = (s) => new THREE.Color('#' + s);
+
+    // ── Renderer (matches Engine: ACES tonemapping) ──────────────────────
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      if (P.enc) renderer.outputEncoding = THREE.sRGBEncoding;
+      document.body.appendChild(renderer.domElement);
+    } catch (err) {
+      const r = document.getElementById('report');
+      r.style.display = 'block';
+      r.textContent = '[renderer] ' + err.message;
+      throw err;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.3, 8000);
+    camera.position.set(0, 2, 0);
+
+    // ── Fog + water plane (mirror the game's horizon look) ───────────────
+    const nightFactor = P.night;
+    const fog = new THREE.FogExp2(new THREE.Color(0xcce0ff).lerp(new THREE.Color(0x0a1526), nightFactor), 0.001);
+    scene.fog = fog;
+    const water = new THREE.Mesh(
+      new THREE.PlaneGeometry(8000, 8000),
+      new THREE.MeshLambertMaterial({ color: new THREE.Color(0x1da2d8).lerp(new THREE.Color(0x0a1e33), nightFactor) })
+    );
+    water.rotation.x = -Math.PI / 2;
+    scene.add(water);
+
+    // ── Lights (mirror Engine._setupLighting + TimeSystem day values) ────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.6);
+    scene.add(sun);
+
+    // Sun direction from elevation/azimuth (matches TimeSystem convention).
+    const elev = THREE.MathUtils.degToRad(P.elev);
+    const azim = THREE.MathUtils.degToRad(P.azim);
+    const sunDir = new THREE.Vector3(
+      Math.cos(elev) * Math.sin(azim),
+      Math.sin(elev),
+      Math.cos(elev) * Math.cos(azim)
+    );
+
+    // ── Sky ──────────────────────────────────────────────────────────────
+    let sky, sunUniform;
+    if (P.sky === 'custom') {
+      // Custom gradient sky: writes display-ready values and opts out of tone
+      // mapping (tonemapped:false) so it renders exactly the palette below in
+      // the game's pass-through pipeline — no Preetham wash-out, no double gamma.
+      sky = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.ShaderMaterial({
+          side: THREE.BackSide,
+          depthWrite: false,
+          fog: false,
+          toneMapped: false, // sky writes its own final colors — skip ACES
+          uniforms: {
+            uSunDir: { value: sunDir.clone() },
+            uNight:  { value: nightFactor },
+            uDayZenith:   { value: hex(P.dz) },
+            uDayHorizon:  { value: hex(P.dh) },
+            uNightZenith: { value: hex(P.nz) },
+            uNightHorizon:{ value: hex(P.nh) },
+          },
+          vertexShader: `
+            varying vec3 vDir;
+            void main() {
+              vec4 wp = modelMatrix * vec4(position, 1.0);
+              vDir = normalize(wp.xyz - cameraPosition);
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              gl_Position.z = gl_Position.w;
+            }
+          `,
+          fragmentShader: `
+            uniform vec3 uSunDir;
+            uniform float uNight;
+            uniform vec3 uDayZenith;
+            uniform vec3 uDayHorizon;
+            uniform vec3 uNightZenith;
+            uniform vec3 uNightHorizon;
+            varying vec3 vDir;
+            void main() {
+              vec3 dir = normalize(vDir);
+              float y = dir.y;
+
+              // vertical gradient: t=0 at horizon, 1 at zenith
+              float t = clamp(y * 1.7 + 0.14, 0.0, 1.0);
+              vec3 day   = mix(uDayHorizon,  uDayZenith,  pow(t, 0.72));
+              vec3 night = mix(uNightHorizon,uNightZenith, pow(t, 0.8));
+
+              // golden-hour tint: near the horizon the whole sky warms when the
+              // sun is low; strongest toward the sun's azimuth, fading away.
+              float sd = clamp(dot(dir, uSunDir), 0.0, 1.0);
+              float sunUp = smoothstep(-0.14, 0.02, uSunDir.y);
+              float gold = smoothstep(0.18, 0.04, abs(uSunDir.y)) * sunUp;
+              float band = exp(-abs(y) * 7.0);
+              float side = 0.40 + 0.60 * pow(max(sd, 0.0), 1.2);
+              vec3 golden = vec3(1.0, 0.50, 0.18); // display (255,128,46)
+              day = mix(day, golden, clamp(band * (0.25 + 0.75 * side) * gold, 0.0, 1.0));
+              vec3 col = mix(day, night, uNight);
+
+              // sun: tight halo + crisp disc (fades as the sun dips below the
+              // horizon; the halo dies within ~10 deg so the blue sky stays clean)
+              float halo = pow(max(sd, 0.0), 56.0);
+              float disc = smoothstep(0.9980, 0.9995, sd);
+              vec3 sunCol = vec3(1.0, 0.96, 0.86); // display (255,245,219)
+              col += sunCol * (disc * 1.0 + halo * 0.32) * sunUp;
+
+              // soft pale haze hugging the horizon by day (fades at golden hour
+              // so the sunset's warm band isn't washed toward pink)
+              col += vec3(0.62, 0.76, 0.93) * exp(-abs(y) * 7.0) * (1.0 - uNight)
+                    * (1.0 - gold * band * 0.85) * 0.12; // display (158,194,237)
+
+              // faint moon halo at night (moon sits opposite the sun)
+              float md = clamp(dot(dir, -uSunDir), 0.0, 1.0);
+              col += vec3(0.55, 0.65, 0.90) * pow(md, 22.0) * uNight * 0.16; // display (140,166,230)
+
+              // pass-through pipeline (game default): write display-ready values
+              gl_FragColor = vec4(col, 1.0);
+            }
+          `,
+        })
+      );
+      sky.scale.setScalar(10000);
+      scene.add(sky);
+      sunUniform = sky.material.uniforms.uSunDir;
+    } else {
+      // three.js Preetham Sky (mirror Engine._setupSky incl. camera patch)
+      if (!Sky.SkyShader.fragmentShader.includes('cameraPosition')) {
+        Sky.SkyShader.fragmentShader = Sky.SkyShader.fragmentShader
+          .replace('const vec3 cameraPos = vec3( 0.0, 0.0, 0.0 );', '')
+          .replace('normalize( vWorldPosition - cameraPos )', 'normalize( vWorldPosition - cameraPosition )');
+      }
+      sky = new Sky();
+      sky.scale.setScalar(10000);
+      scene.add(sky);
+      const u = sky.material.uniforms;
+      u['turbidity'].value = P.turbidity;
+      u['rayleigh'].value = P.rayleigh;
+      u['mieCoefficient'].value = P.mie;
+      u['mieDirectionalG'].value = P.g;
+      sunUniform = u['sunPosition'];
+    }
+
+    sunUniform.value.copy(sunDir);
+    sun.position.copy(sunDir).multiplyScalar(200);
+    if (P.moon) {
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(140, 16, 16), new THREE.MeshBasicMaterial({ color: 0xf2f6ff }));
+      moon.position.copy(sunDir).multiplyScalar(-4500);
+      scene.add(moon);
+    }
+
+    // ── Clouds — dynamic smooth cumulus (mirrors the new CloudSystem) ────
+    const CLOUD_COUNT = parseInt(q.get('count') || '52', 10);
+    const DISC_RADIUS = parseFloat(q.get('radius') || '1800');
+    const ALT_MIN = 260, ALT_MAX = 440;
+    const SCALE_MIN = 13, SCALE_MAX = 36;
+    const CLOUD_AMP = parseFloat(q.get('amp') || '1.8');   // morph strength
+    const MORPH_SPEED = parseFloat(q.get('morph') || '0.14'); // morph speed
+
+    // 3D simplex noise (Ashima Arts / Gustavson) for the billow displacement
+    const NOISE_GLSL = `
+      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+      float snoise(vec3 v) {
+        const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+        vec3 i = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+        i = mod289(i);
+        vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+        float n_ = 0.142857142857;
+        vec3 ns = n_ * D.wyz - D.xzx;
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+        vec4 s0 = floor(b0) * 2.0 + 1.0;
+        vec4 s1 = floor(b1) * 2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+        vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+      }
+    `;
+
+    function makeCumulus() {
+      const puffs = [];
+      const mainCount = 4 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < mainCount; i++) {
+        const a = (i / mainCount) * Math.PI * 2 + Math.random() * 0.6;
+        const r = 0.28 + Math.random() * 0.35;
+        const puff = new THREE.IcosahedronGeometry(1, 2);
+        const s = 0.9 + Math.random() * 0.35;
+        puff.scale(s, s * 0.66, s);
+        puff.translate(Math.cos(a) * r, 0.10 + Math.random() * 0.18, Math.sin(a) * r);
+        puffs.push(puff);
+      }
+      const flankCount = 4 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < flankCount; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 0.65 + Math.random() * 0.75;
+        const puff = new THREE.IcosahedronGeometry(1, 2);
+        const s = 0.5 + Math.random() * 0.45;
+        puff.scale(s, s * 0.75, s);
+        puff.translate(Math.cos(a) * r, -0.15 + Math.random() * 0.3, Math.sin(a) * r * 0.95);
+        puffs.push(puff);
+      }
+      const merged = mergeBufferGeometries(puffs, false);
+      puffs.forEach((p) => p.dispose());
+      merged.computeVertexNormals();
+      return merged;
+    }
+
+    function shadeCloud(geo) {
+      // White crowns → soft blue-gray underbodies (cumulus look).
+      const pos = geo.attributes.position;
+      const colors = new Float32Array(pos.count * 3);
+      const top = new THREE.Color(1, 1, 1);
+      const bottom = new THREE.Color(0.87, 0.89, 0.95);
+      const c = new THREE.Color();
+      for (let i = 0; i < pos.count; i++) {
+        const t = THREE.MathUtils.clamp((pos.getY(i) + 0.9) / 2.1, 0, 1);
+        c.copy(bottom).lerp(top, t);
+        colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    }
+
+    const shapes = [makeCumulus(), makeCumulus()];
+    shapes.forEach(shadeCloud);
+    const perShape = Math.ceil(CLOUD_COUNT / shapes.length);
+    const cloudMat = new THREE.MeshLambertMaterial({ vertexColors: true, color: 0xffffff });
+
+    // Dynamic morph: billow each cloud with animated simplex noise in the
+    // vertex shader (per-instance phase keeps clouds out of sync).
+    let cloudShader = null;
+    cloudMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uCloudTime = { value: 0 };
+      shader.uniforms.uCloudAmp = { value: CLOUD_AMP };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\n' + NOISE_GLSL + '\nuniform float uCloudTime;\nuniform float uCloudAmp;\nattribute float aPhase;\n')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          float cT = uCloudTime * ${MORPH_SPEED} + aPhase;
+          float d1 = snoise(position * 0.9 + vec3(0.0, cT, cT * 0.6));
+          float d2 = snoise(position * 2.3 - vec3(cT * 0.8, cT * 0.4, 0.0));
+          transformed += normal * (d1 * 0.10 + d2 * 0.05) * uCloudAmp;
+        `);
+      cloudShader = shader;
+    };
+
+    const cloudGroup = new THREE.Group();
+    const meshes = shapes.map((geo) => {
+      const m = new THREE.InstancedMesh(geo, cloudMat, perShape);
+      m.frustumCulled = false;
+      cloudGroup.add(m);
+      return m;
+    });
+    scene.add(cloudGroup);
+
+    const data = [];
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.sqrt(Math.random()) * DISC_RADIUS;
+      data.push({
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
+        y: THREE.MathUtils.randFloat(ALT_MIN, ALT_MAX),
+        scale: THREE.MathUtils.randFloat(SCALE_MIN, SCALE_MAX),
+        rotY: Math.random() * Math.PI * 2,
+        speed: THREE.MathUtils.randFloat(1.5, 4.5),
+        dirAngle: THREE.MathUtils.randFloat(-0.5, 0.5), // wind spread around +X
+        phase: Math.random() * 100,
+      });
+    }
+    // Per-instance morph phase, one value per instance slot (cloud i → mesh i%2, slot i/2)
+    shapes.forEach((geo, gi) => {
+      const phases = new Float32Array(perShape);
+      for (let k = 0; k < perShape; k++) {
+        const ci = k * shapes.length + gi;
+        phases[k] = ci < data.length ? data[ci].phase : 0;
+      }
+      geo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+    });
+    const dummy = new THREE.Object3D();
+
+    function updateClouds(fd, camPos) {
+      cloudGroup.position.x = camPos.x;
+      cloudGroup.position.z = camPos.z;
+      if (cloudShader) cloudShader.uniforms.uCloudTime.value += fd;
+      data.forEach((c, i) => {
+        // per-cloud wind: mostly +X with a little direction spread
+        c.x += Math.cos(c.dirAngle) * c.speed * fd;
+        c.z += Math.sin(c.dirAngle) * c.speed * fd;
+        // recycle clouds that drift past the ring edge (reflect through centre)
+        const dist = Math.hypot(c.x, c.z);
+        if (dist > DISC_RADIUS) {
+          c.x = -c.x * (DISC_RADIUS / dist);
+          c.z = -c.z * (DISC_RADIUS / dist);
+        }
+        dummy.position.set(c.x, c.y, c.z);
+        dummy.rotation.set(0, c.rotY, 0);
+        dummy.scale.setScalar(c.scale);
+        dummy.updateMatrix();
+        meshes[i % meshes.length].setMatrixAt(Math.floor(i / meshes.length), dummy.matrix);
+      });
+      meshes.forEach((m) => { m.instanceMatrix.needsUpdate = true; });
+      cloudMat.color.copy(new THREE.Color(0xffffff)).lerp(new THREE.Color(0x141d2b), nightFactor);
+    }
+
+    // ── Camera look + render loop ────────────────────────────────────────
+    const yaw = THREE.MathUtils.degToRad(P.yaw);
+    const pitch = THREE.MathUtils.degToRad(P.pitch);
+    const target = new THREE.Vector3(
+      camera.position.x - Math.sin(yaw) * 100,
+      camera.position.y + Math.tan(pitch) * 100,
+      camera.position.z - Math.cos(yaw) * 100
+    );
+    camera.lookAt(target);
+
+    let t = 0;
+    function animate() {
+      requestAnimationFrame(animate);
+      t += 1 / 60;
+      // Slight slow pan so a screenshot mid-animation still shows depth.
+      if (t < 4) { cloudGroup.rotation.y = t * 0.01; }
+      if (P.sky === 'custom') sky.material.uniforms.uNight.value = nightFactor;
+      updateClouds(1 / 60, camera.position);
+      renderer.render(scene, camera);
+      if (t > 0.5 && document.title !== 'SKY-CHECK-DONE') {
+        document.title = 'SKY-CHECK-DONE';
+      }
+    }
+    animate();
+    }
+  </script>
+</body>
+</html>

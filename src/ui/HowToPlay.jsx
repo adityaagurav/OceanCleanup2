@@ -1,74 +1,86 @@
 import React from 'react';
 import GameButton from '../components/GameButton';
+import Icon from '../components/Icon';
+import { OceanBackdrop } from '../components/OceanBackdrop';
+
+function KeyRow({ keys, desc, highlight }) {
+  return (
+    <div
+      className={`flex items-center justify-between gap-4 px-3 py-2.5 rounded-xl ${
+        highlight ? 'bg-ocean/10 border border-cyan-soft/25' : ''
+      }`}
+    >
+      <span className="keycap">{keys}</span>
+      <span className={highlight ? 'text-cyan-soft font-semibold text-sm' : 'chip-text text-sm'}>
+        {desc}
+      </span>
+    </div>
+  );
+}
 
 function HowToPlay({ onNavigate }) {
   return (
-    <div
-      className="w-screen h-screen bg-cover bg-center relative flex flex-col justify-between items-center p-8 select-none overflow-y-auto"
-      style={{
-        backgroundImage: `url('/background/harbor-background_1.png')`,
-      }}
-    >
-      <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md"></div>
-
-      <div className="relative z-10 max-w-3xl w-full flex flex-col items-center my-auto">
-        <h2 className="text-4xl md:text-5xl font-extrabold text-white mb-2 flex items-center gap-3">
-          <span>🎮</span> How To Play
-        </h2>
-        <p className="text-slate-400 mb-8">Master boat steering & 3D mouse fishing mechanics</p>
-
-        <div className="w-full bg-slate-900/80 border border-slate-700/60 rounded-3xl p-8 shadow-2xl backdrop-blur-lg grid md:grid-cols-2 gap-6">
-          {/* Controls */}
-          <div className="bg-slate-950/60 border border-slate-800 p-6 rounded-2xl">
-            <h3 className="text-xl font-bold text-cyan-300 mb-4 flex items-center gap-2">
-              <span>🕹️</span> Navigation & Fishing
-            </h3>
-            <div className="space-y-3 text-slate-300 text-sm">
-              <div className="flex justify-between items-center">
-                <span className="font-mono bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 font-bold">W / ↑</span>
-                <span>Accelerate Forward</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="font-mono bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 font-bold">S / ↓</span>
-                <span>Reverse / Brake</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="font-mono bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 font-bold">A / D</span>
-                <span>Steer Boat Left / Right</span>
-              </div>
-              <div className="flex justify-between items-center bg-cyan-950/40 p-2 rounded-xl border border-cyan-500/30">
-                <span className="font-mono bg-cyan-500 text-slate-950 px-3 py-1 rounded-lg font-black">CLICK MOUSE</span>
-                <span className="text-cyan-300 font-semibold">Fish garbage under target ring</span>
-              </div>
+    <OceanBackdrop>
+      <div className="h-full flex flex-col items-center menu-scroll overflow-y-auto px-6 py-8">
+        <div className="w-full max-w-3xl my-auto py-4">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-3xl md:text-4xl font-extrabold text-foam flex items-center gap-3">
+                <Icon name="book" size={28} className="text-cyan-soft" />
+                How to Play
+              </h2>
+              <p className="text-foam/60 mt-1">Master the boat and reel in the ocean's trash</p>
             </div>
+            <GameButton text="Back" icon="arrow-left" variant="ghost" size="auto"
+              onClick={() => onNavigate('MENU')} />
           </div>
 
-          {/* Gameplay Rules */}
-          <div className="bg-slate-950/60 border border-slate-800 p-6 rounded-2xl flex flex-col justify-between">
-            <div>
-              <h3 className="text-xl font-bold text-emerald-400 mb-4 flex items-center gap-2">
-                <span>🎣</span> 3D Fishing Mechanics
+          <div className="grid md:grid-cols-2 gap-5">
+            {/* Controls */}
+            <div className="panel-dark p-6">
+              <h3 className="text-lg font-bold text-cyan-soft mb-4 flex items-center gap-2">
+                <Icon name="sliders" size={18} />
+                Navigation
               </h3>
-              <ul className="space-y-3 text-slate-300 text-sm list-disc list-inside">
-                <li>Touching garbage with the boat no longer auto-collects it.</li>
-                <li>Aim your cursor at floating plastic waste until the <span className="text-cyan-400 font-bold">blue target ring</span> appears.</li>
-                <li>Click to cast a 3D fishing line that hooks and reels the debris back to your boat deck!</li>
-                <li>Earn <strong className="text-cyan-300">+50 points</strong> per fished item.</li>
+              <div className="space-y-2">
+                <KeyRow keys="W / ↑" desc="Throttle forward" />
+                <KeyRow keys="S / ↓" desc="Reverse / brake" />
+                <KeyRow keys="A / D" desc="Steer left / right" />
+                <KeyRow keys="MOUSE" desc="Drag to look · click to lock cursor" />
+                <KeyRow keys="E" desc="Board / leave the boat" />
+              </div>
+            </div>
+
+            {/* Fishing */}
+            <div className="panel-dark p-6">
+              <h3 className="text-lg font-bold text-aqua mb-4 flex items-center gap-2">
+                <Icon name="target" size={18} />
+                Cleaning the Ocean
+              </h3>
+              <ul className="space-y-3 chip-text text-sm list-none">
+                <li className="flex gap-2.5">
+                  <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
+                  <span>Drive close to floating plastic — an <strong className="text-cyan-soft">aqua ring</strong> marks the nearest piece.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
+                  <span>Press <span className="keycap">F</span> to cast a line that reels the trash onto your deck.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
+                  <span>Earn <strong className="text-cyan-soft">+50 points</strong> per item. Collect <strong className="text-cyan-soft">20</strong> to complete the mission.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
+                  <span>Dock back at the pier and press <span className="keycap">E</span> to leave the boat and see your summary.</span>
+                </li>
               </ul>
             </div>
           </div>
         </div>
-
-        <div className="mt-8">
-          <GameButton
-            text="BACK TO MENU"
-            icon="⬅️"
-            variant="ghost"
-            onClick={() => onNavigate('MENU')}
-          />
-        </div>
       </div>
-    </div>
+    </OceanBackdrop>
   );
 }
 

@@ -1,5 +1,57 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   Ocean Cleanup — design tokens (Tailwind 4 theme)
+   ───────────────────────────────────────────────────────────── */
+@theme {
+  --font-ui: "Outfit", system-ui, -apple-system, BlinkMacSystemFont,
+             "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell,
+             "Helvetica Neue", sans-serif;
+
+  --color-ink:       #0b2a45; /* primary text on light surfaces     */
+  --color-ink-deep:  #0a1f33; /* dark surfaces (menus, modals)      */
+  --color-ink-soft:  #16406b; /* secondary dark                     */
+  --color-ocean:     #0f86c4; /* primary accent / primary buttons   */
+  --color-ocean-deep:#0b6395; /* accent deep                        */
+  --color-cyan-soft: #57c7e8; /* highlights, key chips, active      */
+  --color-foam:      #f4fafd; /* light surface base                 */
+  --color-aqua:      #19b89a; /* success / pickup                   */
+  --color-sand:      #f2a33c; /* warnings / best highlight          */
+}
+
+/* ── Theme variables — the HUD flips between light glass (day)
+      and deep-navy glass (night) by toggling `.night` on #root. ── */
+:root {
+  --chip-bg:            rgba(244, 250, 253, 0.72);
+  --chip-border:        rgba(255, 255, 255, 0.6);
+  --chip-bg-strong:     rgba(244, 250, 253, 0.9);
+  --chip-border-strong: rgba(255, 255, 255, 0.85);
+  --chip-label:         #2e6e96;
+  --chip-ink:           #0b2a45;
+  --chip-sub:           #3e6e93;
+  --key-text:           #0b2a45;
+  --key-bg:             rgba(255, 255, 255, 0.92);
+  --key-border:         rgba(11, 42, 69, 0.18);
+  --key-shadow:         rgba(11, 42, 69, 0.18);
+  --progress-track:     rgba(11, 42, 69, 0.14);
+  --divider:            rgba(11, 42, 69, 0.12);
+}
+.night {
+  --chip-bg:            rgba(10, 31, 51, 0.66);
+  --chip-border:        rgba(87, 199, 232, 0.25);
+  --chip-bg-strong:     rgba(13, 38, 63, 0.84);
+  --chip-border-strong: rgba(87, 199, 232, 0.42);
+  --chip-label:         #7fd0ef;
+  --chip-ink:           #eaf6fd;
+  --chip-sub:           #9fc3da;
+  --key-text:           #eaf6fd;
+  --key-bg:             rgba(87, 199, 232, 0.16);
+  --key-border:         rgba(87, 199, 232, 0.35);
+  --key-shadow:         rgba(0, 0, 0, 0.35);
+  --progress-track:     rgba(244, 250, 253, 0.18);
+  --divider:            rgba(244, 250, 253, 0.14);
+}
+
 @layer base {
   * {
     margin: 0;
@@ -8,31 +60,293 @@
     user-select: none;
   }
 
-  body, html, #root {
+  html, body, #root {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-    background-color: #030f1e;
+  }
+
+  body {
+    font-family: var(--font-ui);
+    background-color: #04233b;
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  input[type="range"] { accent-color: #0f86c4; }
+}
+
+@layer components {
+  /* ── Type helpers ──────────────────────────────────────────── */
+  .num-tabular { font-variant-numeric: tabular-nums; }
+  .chip-label {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--chip-label);
+    white-space: nowrap;
+  }
+  .chip-value {
+    font-weight: 700;
+    color: var(--chip-ink);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .chip-text { color: var(--chip-ink); }
+  .chip-sub  { color: var(--chip-sub); }
+
+  /* ── Glass surfaces ────────────────────────────────────────── */
+  .hud-chip {
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    border-radius: 16px;
+    box-shadow: 0 10px 28px -14px rgba(8, 42, 68, 0.45);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .hud-chip-strong {
+    background: var(--chip-bg-strong);
+    border-color: var(--chip-border-strong);
+  }
+
+  .panel-dark {
+    background: rgba(10, 31, 51, 0.78);
+    border: 1px solid rgba(87, 199, 232, 0.18);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  /* ── Keycap chip (E / F / WASD …) ──────────────────────────── */
+  .keycap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--key-text);
+    background: var(--key-bg);
+    border: 1px solid var(--key-border);
+    box-shadow: 0 2px 0 var(--key-shadow);
+  }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn-ui {
+    transition: transform 0.15s ease, background-color 0.15s ease,
+                border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn-ui:hover  { transform: translateY(-1px); }
+  .btn-ui:active { transform: translateY(0) scale(0.97); }
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--color-cyan-soft);
+    outline-offset: 2px;
+  }
+
+  .progress-track {
+    background: var(--progress-track);
+  }
+
+  /* ── Compass (top-centre heading ribbon) ──────────────────── */
+  .compass {
+    position: relative;
+    width: min(340px, calc(100vw - 150px));
+    height: 46px;
+    pointer-events: none;
+  }
+  /* No glass pill — the rose floats bare over the scene. A soft mask fades
+     the ticks at the edges so they melt into the water, and the labels carry
+     a faint text shadow so they stay readable on bright sky/ocean. */
+  .compass-dial-wrap {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  }
+  .compass-dial-wrap::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 7px;
+    height: 1px;
+    background: var(--chip-ink);
+    opacity: 0.14;
+  }
+  .compass-dial {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    height: 100%;
+    will-change: transform;
+  }
+  .compass-tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .compass-label {
+    padding-top: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.03em;
+    color: var(--chip-sub);
+    text-shadow: 0 1px 3px rgba(4, 20, 35, 0.55), 0 0 8px rgba(4, 20, 35, 0.3);
+  }
+  .compass-tick.is-major .compass-label {
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: var(--chip-ink);
+    text-shadow: 0 1px 3px rgba(244, 250, 253, 0.35), 0 0 10px rgba(4, 20, 35, 0.4);
+  }
+  .compass-line {
+    display: block;
+    width: 1px;
+    height: 4px;
+    margin-top: 3px;
+    background: var(--chip-sub);
+    opacity: 0.4;
+  }
+  .compass-tick.is-medium .compass-line { height: 7px; width: 1.5px; opacity: 0.55; }
+  .compass-tick.is-major  .compass-line { height: 11px; width: 2px; background: var(--chip-ink); opacity: 0.5; }
+
+  /* Fixed centre needle — dips below the gauge line, points at your heading */
+  .compass-needle {
+    position: absolute;
+    left: 50%;
+    bottom: 1px;
+    transform: translateX(-50%);
+    z-index: 3;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 9px solid var(--color-cyan-soft);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  }
+
+  /* Harbour waypoint pin — floats above the rose at its true bearing */
+  .compass-waypoint {
+    position: absolute;
+    top: 0;
+    z-index: 2;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    transition: left 0.12s linear;
+  }
+  .compass-waypoint-dist {
+    margin-top: 2px;
+    padding: 1px 7px;
+    border-radius: 99px;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    color: var(--chip-ink);
+    background: var(--chip-bg-strong);
+    border: 1px solid var(--chip-border-strong);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  }
+  .compass-waypoint-pin {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 21px;
+    height: 21px;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    background: linear-gradient(135deg, var(--color-aqua), #0d8d75);
+    border: 1.5px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 3px 8px -2px rgba(0, 0, 0, 0.45);
     color: #ffffff;
   }
+  .compass-waypoint-pin svg { transform: rotate(45deg); }
+  .compass-waypoint-off {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 2px;
+    padding: 2px 7px;
+    border-radius: 99px;
+    font-size: 0.85rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--chip-ink);
+    background: var(--chip-bg-strong);
+    border: 1px solid var(--chip-border-strong);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  }
+  .compass-waypoint-arrow { color: var(--color-aqua); }
 }
 
-/* Custom Animations & Pulse Glows */
-@keyframes floatAnim {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
+/* ── Animations (transform/opacity only — compositor cheap) ── */
+@keyframes uiFadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes uiPop {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes uiTick {
+  0%   { opacity: 1; }
+  40%  { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+@keyframes uiToast {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes counterPop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+@keyframes waveX {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.5;  transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.06); }
 }
 
-.animate-float {
-  animation: floatAnim 4s ease-in-out infinite;
+.anim-fade-up  { animation: uiFadeUp 0.18s ease-out both; }
+.anim-fade-up-lg { animation: uiFadeUp 0.3s ease-out both; }
+.anim-pop      { animation: uiPop 0.22s cubic-bezier(0.2, 0.7, 0.3, 1.15) both; }
+.anim-tick     { animation: uiTick 0.16s ease-out; }
+.anim-toast    { animation: uiToast 0.2s ease-out both; }
+.anim-counter  { animation: counterPop 0.3s ease-out; }
+.anim-wave     { animation: waveX 24s linear infinite; }
+.anim-wave-fast { animation: waveX 15s linear infinite; }
+.anim-glow     { animation: glowPulse 6s ease-in-out infinite; }
+
+/* Subtle scrollbars for menu screens */
+.menu-scroll::-webkit-scrollbar { width: 8px; }
+.menu-scroll::-webkit-scrollbar-thumb {
+  background: rgba(87, 199, 232, 0.25);
+  border-radius: 99px;
 }
 
-@keyframes pulseGlow {
-  0%, 100% { opacity: 0.4; filter: blur(20px); }
-  50% { opacity: 0.8; filter: blur(30px); }
-}
-
-.animate-glow {
-  animation: pulseGlow 3s infinite;
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+  }
 }

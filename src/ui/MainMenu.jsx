@@ -48,24 +48,21 @@ function MainMenu({ onNavigate, soundMuted, onToggleSound }) {
             <GameButton
               text="START CLEANING"
               icon="⛵"
+              size="lg"
               onClick={() => onNavigate('GAME')}
-            />
-            <GameButton
-              text="LEADERBOARD"
-              icon="🏆"
-              variant="secondary"
-              onClick={() => onNavigate('LEADERBOARD')}
             />
             <GameButton
               text="HOW TO PLAY"
               icon="🎮"
               variant="ghost"
+              size="lg"
               onClick={() => onNavigate('HOW_TO_PLAY')}
             />
             <GameButton
               text="SETTINGS"
               icon="⚙️"
               variant="ghost"
+              size="lg"
               onClick={() => onNavigate('SETTINGS')}
             />
           </div>

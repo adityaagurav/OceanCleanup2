@@ -1,98 +1,247 @@
-import React from 'react';
+import React, { memo, useEffect, useState } from 'react';
+import Icon from '../components/Icon';
+import { Speedometer } from '../components/Speedometer';
+import { Compass } from '../components/Compass';
+import { MissionConfig } from '../config/MissionConfig';
 
-function HUD({ score, trashCount, boatSpeed, pickupToast, nearTrash, onPause, onQuit, missionActive, isNearBoat, isDocked, missionState }) {
+/* ──────────────────────────────────────────────────────────────
+   Small memoized building blocks — a pickup or speed change only
+   re-renders its own chip, never the whole HUD.
+   ────────────────────────────────────────────────────────────── */
+
+const IconButton = memo(function IconButton({ name, onClick, label, active }) {
   return (
-    <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between p-6 select-none">
-      {/* Top Bar: Stats & Controls */}
-      <div className="flex justify-between items-start gap-4">
-        {/* Score & Trash Stats */}
-        {missionActive && <div className="flex gap-4">
-          <div className="bg-gradient-to-b from-sky-400 to-sky-600 border-4 border-sky-900 rounded-2xl px-5 py-2 flex items-center gap-3 shadow-[0_4px_0_rgba(12,74,110,1)] text-white transform transition-transform hover:scale-105 pointer-events-auto">
-            <span className="text-3xl drop-shadow-md">📦</span>
-            <div>
-              <div className="text-sky-200 text-xs font-black uppercase tracking-widest drop-shadow-sm">Trash</div>
-              <div className="text-white text-3xl font-black drop-shadow-md" style={{ textShadow: '2px 2px 0 #0c4a6e' }}>{trashCount}</div>
-            </div>
-          </div>
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="btn-ui focus-ring w-10 h-10 rounded-xl hud-chip flex items-center justify-center cursor-pointer pointer-events-auto"
+    >
+      <Icon name={name} size={18} className={active ? 'text-cyan-soft' : 'chip-text'} />
+    </button>
+  );
+});
 
-          <div className="bg-gradient-to-b from-emerald-400 to-emerald-600 border-4 border-emerald-900 rounded-2xl px-5 py-2 flex items-center gap-3 shadow-[0_4px_0_rgba(6,78,59,1)] text-white transform transition-transform hover:scale-105 pointer-events-auto">
-            <span className="text-3xl drop-shadow-md">⭐</span>
-            <div>
-              <div className="text-emerald-200 text-xs font-black uppercase tracking-widest drop-shadow-sm">Score</div>
-              <div className="text-white text-3xl font-black drop-shadow-md" style={{ textShadow: '2px 2px 0 #064e3b' }}>{score}</div>
-            </div>
-          </div>
-        </div>}
+/** One-shot toast (pickup, mission complete). Flows with the top-center stack. */
+const Toast = memo(function Toast({ icon, tone, children }) {
+  return (
+    <div className="anim-toast hud-chip-strong px-4 py-2 flex items-center gap-2 whitespace-nowrap">
+      <Icon name={icon} size={16} className={tone === 'aqua' ? 'text-aqua' : 'text-sand'} />
+      <span className="chip-text text-sm font-semibold">{children}</span>
+    </div>
+  );
+});
 
-        {/* Quit / Menu */}
-        <button
-          onClick={onQuit}
-          className="pointer-events-auto bg-gradient-to-b from-slate-500 to-slate-700 hover:from-slate-400 hover:to-slate-600 active:translate-y-1 active:shadow-[0_0px_0_rgba(15,23,42,1)] border-4 border-slate-900 text-white px-6 py-3 rounded-2xl shadow-[0_4px_0_rgba(15,23,42,1)] font-black text-lg transition-all cursor-pointer uppercase tracking-widest"
-          style={{ textShadow: '2px 2px 0 #0f172a' }}
-        >
-          ⚙️ Pause
-        </button>
+/** Objective + trash goal progress — top center, boat mode. */
+const ObjectiveChip = memo(function ObjectiveChip({ trashCount, missionComplete }) {
+  const pct = Math.min(100, (trashCount / MissionConfig.TRASH_GOAL) * 100);
+  return (
+    <div className="hud-chip px-4 py-2 flex items-center gap-3">
+      <Icon
+        name={missionComplete ? 'check' : 'target'}
+        size={18}
+        className={missionComplete ? 'text-aqua' : 'text-cyan-soft'}
+      />
+      <div className="flex flex-col items-start gap-0.5">
+        <span className="chip-label">{missionComplete ? 'Mission complete' : 'Mission'}</span>
+        <span className="chip-text text-sm font-semibold leading-none">
+          {missionComplete ? 'Return to the harbour' : 'Clean the ocean'}
+        </span>
       </div>
+      {!missionComplete && (
+        <div className="flex items-center gap-2 pl-2">
+          <span className="chip-value text-lg">
+            {trashCount}
+            <span className="chip-sub text-sm font-semibold">/{MissionConfig.TRASH_GOAL}</span>
+          </span>
+          <div className="progress-track h-1 w-16 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-aqua to-cyan-soft"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
 
-      {/* Context prompts — kept near the top so gameplay stays unobstructed. */}
-      <div className="absolute top-28 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
-        {/* Near Trash Prompt */}
-        {nearTrash && (
-          <div className="bg-emerald-500 text-slate-950 px-8 py-3.5 rounded-2xl font-black text-xl shadow-2xl backdrop-blur-md border-2 border-emerald-300 animate-bounce flex items-center gap-3">
-            <span className="bg-slate-950 text-emerald-400 px-3 py-1 rounded-xl text-lg font-mono">PRESS F</span>
-            <span>TO PICKUP GARBAGE 🎣</span>
-          </div>
-        )}
-        {/* Near Boat Prompt — board */}
-        {isNearBoat && missionState === 'harbour' && (
-          <div className="bg-blue-500 text-slate-950 px-8 py-3.5 rounded-2xl font-black text-xl shadow-2xl backdrop-blur-md border-2 border-blue-300 animate-bounce flex items-center gap-3">
-            <span className="bg-slate-950 text-blue-400 px-3 py-1 rounded-xl text-lg font-mono">PRESS E</span>
-            <span>TO BOARD BOAT ⛵</span>
-          </div>
-        )}
-        {/* Docked Prompt — leave */}
-        {isDocked && missionActive && (
-          <div className="bg-blue-500 text-slate-950 px-8 py-3.5 rounded-2xl font-black text-xl shadow-2xl backdrop-blur-md border-2 border-blue-300 animate-bounce flex items-center gap-3">
-            <span className="bg-slate-950 text-blue-400 px-3 py-1 rounded-xl text-lg font-mono">PRESS E</span>
-            <span>TO LEAVE BOAT ⛵</span>
-          </div>
-        )}
-        {missionState === 'harbour' && !isNearBoat && (
-          <div className="bg-slate-900/85 border border-amber-300/40 text-amber-100 px-6 py-3 rounded-2xl font-bold shadow-2xl">
-            Explore the harbour and find your boat at the end of the pier.
-          </div>
-        )}
-        {missionState === 'started' && (
-          <div className="bg-emerald-400 text-slate-950 px-7 py-3 rounded-2xl font-black text-lg shadow-2xl">MISSION STARTED — CLEAN THE OCEAN</div>
-        )}
-        {/* Floating Pickup Notification Toast */}
-        {pickupToast && (
-          <div className="bg-cyan-500/90 text-slate-950 px-6 py-2 rounded-full font-black text-lg shadow-2xl backdrop-blur-md animate-pulse">
-            +50 Trash Collected! 🌊
-          </div>
-        )}
+/** Trash + score — bottom left, boat mode. */
+const StatsChip = memo(function StatsChip({ trashCount, score, missionComplete }) {
+  return (
+    <div className="hud-chip px-4 py-2.5 flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        <Icon name="trash" size={16} className="text-aqua" />
+        <span key={trashCount} className="chip-value text-xl anim-counter">
+          {trashCount}
+        </span>
       </div>
+      <div className="w-px h-5" style={{ background: 'var(--divider)' }} />
+      <div className="flex items-center gap-2">
+        <Icon name="star" size={16} className="text-sand" />
+        <span key={score} className="chip-value text-xl anim-counter">
+          {score}
+        </span>
+      </div>
+      {missionComplete && <Icon name="check" size={16} className="text-aqua" />}
+    </div>
+  );
+});
 
-      {/* Bottom Bar: Speedometer & Control Hints */}
-      <div className="flex justify-between items-end">
-        <div className="bg-slate-900/80 border-4 border-slate-700 backdrop-blur-md px-6 py-3 rounded-2xl text-slate-200 text-xs flex items-center gap-6 shadow-[0_4px_0_rgba(15,23,42,1)] font-bold tracking-wide">
-          {missionActive ? <>
-            <div className="flex items-center gap-2"><span className="bg-cyan-500 text-slate-950 px-2 py-1 rounded-md font-black">WASD / ARROWS</span> Drive Boat</div>
-            <div className="flex items-center gap-2 border-l-2 border-slate-700 pl-6"><span className="bg-teal-500 text-slate-950 px-2 py-1 rounded-md font-black">DRAG MOUSE</span> Rotate Camera 360°</div>
-            <div className="flex items-center gap-2 border-l-2 border-slate-700 pl-6"><span className="bg-emerald-500 text-slate-950 px-2 py-1 rounded-md font-black">F</span> Pickup Trash 🎣</div>
-          </> : <>
-            <div className="flex items-center gap-2"><span className="bg-cyan-500 text-slate-950 px-2 py-1 rounded-md font-black">WASD / ARROWS</span> Walk the harbour</div>
-            <div className="flex items-center gap-2 border-l-2 border-slate-700 pl-6"><span className="bg-teal-500 text-slate-950 px-2 py-1 rounded-md font-black">DRAG MOUSE</span> Look around</div>
-          </>}
+/** [KEY] ACTION interaction prompt — fades in/out, never permanent. */
+const InteractionPrompt = memo(function InteractionPrompt({ action, children, tone = 'aqua' }) {
+  return (
+    <div className="anim-fade-up hud-chip px-4 py-2.5 flex items-center gap-2.5">
+      <span className="keycap">{action}</span>
+      <span className="chip-text text-sm font-semibold tracking-wide">{children}</span>
+    </div>
+  );
+});
+
+/** Boat control hints — teach once, then vanish. Reopen via "?". */
+const HintsChip = memo(function HintsChip({ inBoat }) {
+  return (
+    <div className="anim-fade-up hud-chip px-4 py-2 flex items-center gap-3 flex-wrap justify-center max-w-[92vw]">
+      {inBoat ? (
+        <>
+          <span className="flex items-center gap-1.5"><span className="keycap">WASD</span><span className="chip-text text-xs font-medium">Drive</span></span>
+          <span className="w-px h-4" style={{ background: 'var(--divider)' }} />
+          <span className="flex items-center gap-1.5"><span className="keycap">MOUSE</span><span className="chip-text text-xs font-medium">Look</span></span>
+          <span className="w-px h-4" style={{ background: 'var(--divider)' }} />
+          <span className="flex items-center gap-1.5"><span className="keycap">F</span><span className="chip-text text-xs font-medium">Reel trash</span></span>
+          <span className="w-px h-4" style={{ background: 'var(--divider)' }} />
+          <span className="flex items-center gap-1.5"><span className="keycap">E</span><span className="chip-text text-xs font-medium">Dock</span></span>
+        </>
+      ) : (
+        <>
+          <span className="flex items-center gap-1.5"><span className="keycap">WASD</span><span className="chip-text text-xs font-medium">Walk</span></span>
+          <span className="w-px h-4" style={{ background: 'var(--divider)' }} />
+          <span className="flex items-center gap-1.5"><span className="keycap">MOUSE</span><span className="chip-text text-xs font-medium">Look</span></span>
+          <span className="w-px h-4" style={{ background: 'var(--divider)' }} />
+          <span className="flex items-center gap-1.5"><span className="keycap">E</span><span className="chip-text text-xs font-medium">Board boat</span></span>
+        </>
+      )}
+    </div>
+  );
+});
+
+/* ──────────────────────────────────────────────────────────────
+   HUD
+   ────────────────────────────────────────────────────────────── */
+
+function HUD({
+  score,
+  trashCount,
+  boatSpeed,      // knots, throttled by the engine (only pushed on change)
+  pickupToast,
+  nearTrash,
+  isNearBoat,
+  isDocked,
+  missionState,   // 'harbour' | 'started' | 'active'
+  missionComplete,
+  hasStartedMission,
+  inBoat,         // true while controlling the boat
+  soundMuted,
+  onToggleSound,
+  onPause,
+  speedUnit,
+  sessionId,
+  completeToast,
+  compass,        // { heading, harbour, dist } — throttled by the engine
+}) {
+  // Boat control hints: show for the first 15 s of each session, then fade.
+  const [showHints, setShowHints] = useState(true);
+  useEffect(() => {
+    setShowHints(true);
+    const t = setTimeout(() => setShowHints(false), 15000);
+    return () => clearTimeout(t);
+  }, [sessionId, inBoat]);
+
+  // One-time harbour hint ("find your boat") before the first mission.
+  const [showHarbourHint, setShowHarbourHint] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setShowHarbourHint(false), 8000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const showHarbourObjective =
+    missionState === 'harbour' && !hasStartedMission && showHarbourHint && !isNearBoat;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between">
+      {/* ── Top row: objective (center) · system buttons (right) ── */}
+      <div className="flex items-start justify-between p-4 md:p-5 gap-4">
+        <div className="w-24 shrink-0 hidden sm:block" aria-hidden="true" />
+
+        <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
+          {/* Compass — always visible: the harbour waypoint keeps you oriented. */}
+          <Compass
+            heading={compass?.heading ?? 0}
+            harbour={compass?.harbour ?? 0}
+            dist={compass?.dist ?? 0}
+          />
+          {inBoat && <ObjectiveChip trashCount={trashCount} missionComplete={missionComplete} />}
+          {showHarbourObjective && (
+            <div className="anim-fade-up hud-chip px-4 py-2">
+              <span className="chip-text text-sm font-medium">
+                Find your boat at the end of the pier.
+              </span>
+            </div>
+          )}
+          {pickupToast && <Toast icon="trash" tone="aqua">+50 Trash collected</Toast>}
+          {completeToast && <Toast icon="crown" tone="sand">Mission complete — return to harbour!</Toast>}
+          {missionState === 'started' && <Toast icon="ship" tone="aqua">Mission started — clean the ocean</Toast>}
         </div>
 
-        {missionActive && <div className="bg-gradient-to-b from-indigo-500 to-indigo-700 border-4 border-indigo-900 rounded-2xl px-6 py-2 flex items-center gap-4 text-right shadow-[0_4px_0_rgba(30,27,75,1)] pointer-events-auto hover:scale-105 transition-transform cursor-default">
-          <div>
-            <div className="text-indigo-200 text-xs font-black uppercase tracking-widest drop-shadow-sm">Speed</div>
-            <div className="text-white text-3xl font-black drop-shadow-md" style={{ textShadow: '2px 2px 0 #1e1b4b' }}>{boatSpeed.toFixed(1)} kn</div>
+        <div className="flex items-center gap-2 shrink-0">
+          <IconButton
+            name={soundMuted ? 'sound-off' : 'sound-on'}
+            onClick={onToggleSound}
+            label={soundMuted ? 'Unmute sound' : 'Mute sound'}
+            active={!soundMuted}
+          />
+          <IconButton name="pause" onClick={onPause} label="Pause" />
+        </div>
+      </div>
+
+      {/* ── Center — intentionally free for gameplay visibility ── */}
+      <div className="flex-1" aria-hidden="true" />
+
+      {/* ── Bottom row ── */}
+      <div className="flex items-end justify-between p-4 md:p-5 gap-4">
+        {/* Bottom left: stats */}
+        <div className="flex items-center gap-2">
+          {inBoat && <StatsChip trashCount={trashCount} score={score} missionComplete={missionComplete} />}
+        </div>
+
+        {/* Bottom center: prompts + control hints */}
+        <div className="absolute bottom-4 md:bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 max-w-[92vw]">
+          <div className="flex flex-col items-center gap-2">
+            {inBoat && showHints && <HintsChip inBoat />}
+            {isNearBoat && missionState === 'harbour' && (
+              <InteractionPrompt action="E">Board boat</InteractionPrompt>
+            )}
+            {isDocked && inBoat && (
+              <InteractionPrompt action="E">Leave boat</InteractionPrompt>
+            )}
+            {nearTrash && (
+              <InteractionPrompt action="F">Pick up trash</InteractionPrompt>
+            )}
           </div>
-          <span className="text-4xl drop-shadow-md">⚓</span>
-        </div>}
+          {inBoat && (
+            <button
+              onClick={() => setShowHints(v => !v)}
+              aria-label="Toggle control hints"
+              title="Control hints"
+              className="btn-ui focus-ring w-8 h-8 rounded-lg hud-chip flex items-center justify-center cursor-pointer pointer-events-auto"
+            >
+              <Icon name="question" size={14} className={showHints ? 'text-cyan-soft' : 'chip-text'} />
+            </button>
+          )}
+        </div>
+
+        {/* Bottom right: speed */}
+        {inBoat && <Speedometer speedKnots={boatSpeed} unit={speedUnit} />}
       </div>
     </div>
   );

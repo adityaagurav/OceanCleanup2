@@ -19,7 +19,7 @@ export class TimeSystem {
    * @param {THREE.Scene} scene
    * @param {THREE.DirectionalLight} sunLight
    * @param {THREE.AmbientLight} ambientLight
-   * @param {THREE.Object3D} sky - The Sky mesh from three/examples/jsm/objects/Sky.js
+   * @param {THREE.Object3D} sky - The custom gradient sky dome (Engine._setupSky)
    * @param {THREE.DirectionalLight} moonLight - dim bluish light used at night
    */
   constructor(scene, sunLight, ambientLight, sky, moonLight) {
@@ -42,6 +42,15 @@ export class TimeSystem {
     this._moonPos = new THREE.Vector3();
     this._dayAmbientColor = new THREE.Color(0xffffff);
     this._nightAmbientColor = new THREE.Color(0x24304d);
+
+    // Cheap base fill for night: ONE hemisphere light grades the whole scene
+    // (blue sky-tint above, dark ground below) so the harbour's fake/emissive
+    // fixtures never sit in pitch black. A hemisphere is a single light in the
+    // fragment shader — negligible cost compared to the ~40 point/spot lights
+    // it replaces (see HarbourManager._lightPole / _dockLight).
+    this.hemiLight = new THREE.HemisphereLight(0x44597e, 0x10182a, 0);
+    this.hemiLight.name = 'Night fill light';
+    this.scene.add(this.hemiLight);
 
     // Night atmosphere: a starfield + a moon disc, both parented to the sky
     // dome so they follow the camera exactly like the sky does.
@@ -89,11 +98,6 @@ export class TimeSystem {
     // Position the directional light far away
     this.sunLight.position.copy(this._sunPos).multiplyScalar(200);
 
-    // Update the sky shader's sun position
-    if (this.sky && this.sky.material.uniforms['sunPosition']) {
-      this.sky.material.uniforms['sunPosition'].value.copy(this._sunPos);
-    }
-
     // ── Day / night factor ───────────────────────────────────────────
     // Smooth ramp: full daylight a little after sunrise, dark after sunset.
     let dayIntensity = 0;
@@ -101,6 +105,14 @@ export class TimeSystem {
       dayIntensity = Math.min(1.0, elevation / 0.2); // full brightness ~1h after sunrise
     }
     const nightFactor = 1.0 - dayIntensity;
+
+    // Drive the custom sky dome: sun direction (already unit length) + the
+    // day/night factor so the palette, sun and golden-hour band stay in sync
+    // with the real clock.
+    if (this.sky && this.sky.material.uniforms['uSunDir']) {
+      this.sky.material.uniforms['uSunDir'].value.copy(this._sunPos);
+      this.sky.material.uniforms['uNight'].value = nightFactor;
+    }
 
     // Sun light: strong and warm by day, completely off at night.
     this.sunLight.intensity = dayIntensity * GraphicsConfig.SUN_INTENSITY;
@@ -128,8 +140,12 @@ export class TimeSystem {
 
     // ── Ambient light ────────────────────────────────────────────────
     // Cool, dim blue at night; warm white in the day.
-    this.ambientLight.intensity = 0.08 + (dayIntensity * (GraphicsConfig.AMBIENT_INTENSITY - 0.08));
+    this.ambientLight.intensity = 0.14 + (dayIntensity * (GraphicsConfig.AMBIENT_INTENSITY - 0.14));
     this.ambientLight.color.copy(this._dayAmbientColor).lerp(this._nightAmbientColor, nightFactor);
+
+    // Night hemisphere fill — off during the day (intensity 0) so the day
+    // look is untouched.
+    if (this.hemiLight) this.hemiLight.intensity = nightFactor * 0.55;
 
     // ── Night atmosphere: stars + moon disc ──────────────────────────
     if (this._stars) {

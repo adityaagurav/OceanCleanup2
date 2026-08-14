@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Boat Alignment Check (dev tool)</title>
+  <style>
+    body { margin: 0; background: #0a1f33; overflow: hidden; font-family: monospace; }
+    #report {
+      position: absolute; left: 10px; top: 10px; z-index: 10;
+      color: #9fe8ff; font: 12px/1.55 monospace; white-space: pre;
+      background: rgba(0, 0, 0, 0.65); padding: 10px 12px; border-radius: 8px;
+      pointer-events: none; max-width: 46ch;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <pre id="report">loading…</pre>
+  <script type="module">
+    // Dev tool — uses the same three r134 as the game (CDN for portability).
+    import * as THREE from 'https://unpkg.com/three@0.134.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.134.0/examples/jsm/controls/OrbitControls.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.134.0/examples/jsm/loaders/GLTFLoader.js';
+
+    const reportEl = document.getElementById('report');
+    const out = (s) => { reportEl.textContent += s + '\n'; };
+    const fmt = (v) => v.toFixed(2);
+
+    // ── Scene (just for a viewable render — must never block the report) ──
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9cc4ff);
+    scene.fog = new THREE.Fog(0x9cc4ff, 60, 400);
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
+    camera.position.set(2.2, 2.2, 83.5);
+    let renderer = null, controls = null;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      document.body.appendChild(renderer.domElement);
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(7.2, 0.5, 90);
+      controls.update();
+
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.9));
+      const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+      sun.position.set(60, 90, 40);
+      scene.add(sun);
+
+      // Flat water plane at y = 0 so the draft/freeboard are visible.
+      const water = new THREE.Mesh(
+        new THREE.PlaneGeometry(300, 300),
+        new THREE.MeshLambertMaterial({ color: 0x1da2d8, transparent: true, opacity: 0.85 })
+      );
+      water.rotation.x = -Math.PI / 2;
+      water.position.y = 0;
+      scene.add(water);
+      scene.add(new THREE.GridHelper(80, 40, 0x88ccff, 0x5599cc));
+    } catch (e) {
+      out('renderer unavailable (headless): ' + e.message);
+    }
+
+    // ── 1. Load + clone (mirrors Engine._loadModelBoat) ───────────
+    const gltf = await new GLTFLoader().loadAsync('/assets/boat/scene.gltf');
+    out('gltf loaded          : ' + gltf.scene.children.length + ' top-level node(s)');
+    const model = gltf.scene.clone(true);
+    model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+
+    // ── 2. Assemble the kit (mirrors Engine._assembleBoatModel) ───
+    let root = null;
+    model.traverse(o => { if (!root && o.name === 'Root') root = o; });
+    if (!root) { out('ERROR: no "Root" node found'); }
+    const isHullPart = (name) => /^(hull|Lamp)/i.test(name);
+    const hullBox = new THREE.Box3(), fitBox = new THREE.Box3();
+    root.children.forEach(child => {
+      const b = new THREE.Box3().setFromObject(child);
+      if (isHullPart(child.name)) hullBox.union(b); else fitBox.union(b);
+    });
+    out('hull band            : y ' + fmt(hullBox.min.y) + ' → ' + fmt(hullBox.max.y) +
+        '   z ' + fmt(hullBox.min.z) + ' → ' + fmt(hullBox.max.z));
+    out('fittings band        : y ' + fmt(fitBox.min.y) + ' → ' + fmt(fitBox.max.y) +
+        '   z ' + fmt(fitBox.min.z) + ' → ' + fmt(fitBox.max.z));
+    const delta = new THREE.Vector3(
+      (hullBox.min.x + hullBox.max.x) / 2 - (fitBox.min.x + fitBox.max.x) / 2,
+      (hullBox.min.y + hullBox.max.y) / 2 - (fitBox.min.y + fitBox.max.y) / 2,
+      (hullBox.min.z + hullBox.max.z) / 2 - (fitBox.min.z + fitBox.max.z) / 2
+    );
+    root.children.forEach(child => {
+      if (isHullPart(child.name)) return;
+      child.position.add(delta);
+      child.matrixAutoUpdate = true;
+      child.updateMatrix();
+    });
+    out('fittings delta       : ' + delta.toArray().map(v => v.toFixed(3)).join(', '));
+
+    // ── 3. Fit (mirrors Engine._fitBoatModel(6.0, 0.35)) ──────────
+    const LENGTH = 6.0, WATERLINE = 0.35;
+    model.rotation.y = 0;
+    const size = new THREE.Vector3();
+    new THREE.Box3().setFromObject(model).getSize(size);
+    const s = LENGTH / Math.max(size.x, 1e-5);
+    model.scale.setScalar(s);
+    model.rotation.y = Math.PI / 2; // bow (+X) → local -Z
+    const box = new THREE.Box3().setFromObject(model);
+    model.position.set(
+      -(box.min.x + box.max.x) / 2,
+      -(box.min.y + (box.max.y - box.min.y) * WATERLINE),
+      -(box.min.z + box.max.z) / 2
+    );
+    out('scale                : ' + s.toFixed(3));
+    out('model-local hull     : y ' + fmt(box.min.y) + ' → ' + fmt(box.max.y) +
+        '  (keel ' + fmt(box.min.y) + ', gunwale ' + fmt(box.max.y) + ')');
+
+    // ── 4. Wrapper at the berth (mirrors _setupHarbor) ────────────
+    const boat = new THREE.Group();
+    boat.add(model);
+    boat.position.set(7.2, 0.15, 90);   // harbour.boatSpawn
+    boat.rotation.y = Math.PI;          // bow faces away from shore (+Z)
+    scene.add(boat);
+
+    boat.updateMatrixWorld(true);
+    const w = new THREE.Box3().setFromObject(boat);
+    out('WORLD AABB (berth)   : x ' + fmt(w.min.x) + '..' + fmt(w.max.x) +
+        '  y ' + fmt(w.min.y) + '..' + fmt(w.max.y) +
+        '  z ' + fmt(w.min.z) + '..' + fmt(w.max.z));
+    out('size                 : ' + fmt(w.max.x - w.min.x) + ' × ' + fmt(w.max.y - w.min.y) + ' × ' + fmt(w.max.z - w.min.z) + ' m');
+    out('keel y               : ' + fmt(w.min.y) + ' (draft below water ≈ ' + fmt(0.1 - w.min.y) + ' m)');
+    out('bow (world)          : z ≈ ' + fmt(w.max.z) + ' (north, away from shore)');
+    out('stern (world)        : z ≈ ' + fmt(w.min.z));
+    out('berth               : x 7.2 · z 90 · pier at x ≈ 5.4 (west)');
+
+    // Annotate the 3D view (only when a renderer exists).
+    const marker = (label, x, y, z, color) => {
+      const m = new THREE.Sprite(new THREE.SpriteMaterial({ color, depthTest: false }));
+      m.scale.set(1.4, 0.7, 1);
+      m.position.set(x, y, z);
+      scene.add(m);
+      const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+      const g = c.getContext('2d');
+      g.font = 'bold 28px monospace'; g.fillStyle = '#ffffff'; g.textAlign = 'center';
+      g.fillText(label, 128, 40);
+      m.material.map = new THREE.CanvasTexture(c); m.material.needsUpdate = true;
+    };
+    marker('BOW', w.min.x + (w.max.x - w.min.x) / 2, w.max.y + 0.6, w.max.z - 0.6, 0xff8888);
+    marker('STERN', w.min.x + (w.max.x - w.min.x) / 2, w.max.y + 0.6, w.min.z + 0.6, 0x88ff88);
+
+    // ── 5. Render + signal completion for headless verification ────
+    out('STATUS: BOAT-CHECK-DONE');
+    document.title = 'BOAT-CHECK-DONE';
+    function animate() {
+      requestAnimationFrame(animate);
+      if (renderer && controls) { controls.update(); renderer.render(scene, camera); }
+    }
+    animate();
+  </script>
+</body>
+</html>

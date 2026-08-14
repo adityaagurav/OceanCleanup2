@@ -13,7 +13,6 @@
 
 import * as THREE from 'three';
 import { Water } from 'three/examples/jsm/objects/Water.js';
-import { Sky }   from 'three/examples/jsm/objects/Sky.js';
 
 import { GameLoop }            from '../core/GameLoop.js';
 import { InputManager }        from '../player/InputManager.js';
@@ -23,6 +22,7 @@ import { BoatBuoyancy }        from '../player/BoatBuoyancy.js';
 import { BoatEffects }         from '../player/BoatEffects.js';
 import { CameraController }    from '../player/CameraController.js';
 import { VegetationSystem }    from '../world/VegetationSystem.js';
+import { CloudSystem }         from '../world/CloudSystem.js';
 import { ChunkManager }        from '../world/ChunkManager.js';
 import { TimeSystem }          from '../core/TimeSystem.js';
 import { WeatherSystem }       from '../core/WeatherSystem.js';
@@ -56,6 +56,8 @@ export class Engine {
     this.isNearBoat = false;
     this._wasNearBoat = false;
     this.canLeaveBoat = false; // docked at the pier — press E to leave the boat
+    this._nightPushed  = false; // last night state pushed to the UI
+    this._lastCompass  = null;  // last compass packet pushed to the UI (throttle)
 
     this.wallColliders = []; // solid props/buildings — character horizontal blocking
 
@@ -86,10 +88,16 @@ export class Engine {
     const w = this.container.clientWidth  || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
 
+    // Quality preset (Settings → Graphics): maps onto the renderer knobs so
+    // the choice is applied once at construction — no mid-game changes.
+    this._quality = GraphicsConfig.QUALITY_PRESETS[this.options.quality]
+      || GraphicsConfig.QUALITY_PRESETS.balanced;
+    const q = this._quality;
+
     // `powerPreference: 'high-performance'` makes dual-GPU laptops (most Macs)
     // pick the discrete GPU instead of the weak integrated one.
     this.renderer = new THREE.WebGLRenderer({
-      antialias: GraphicsConfig.ANTIALIAS,
+      antialias: q.ANTIALIAS,
       powerPreference: 'high-performance',
     });
     // Adaptive resolution governor: start at 1.0 and let the frame-time meter
@@ -98,15 +106,15 @@ export class Engine {
     this._resScale = {
       target: 1.0,
       min: 0.65,
-      max: Math.min(window.devicePixelRatio, GraphicsConfig.MAX_PIXEL_RATIO),
+      max: Math.min(window.devicePixelRatio, q.MAX_PIXEL_RATIO),
       acc: 0,
       frames: 0,
     };
     this.renderer.setPixelRatio(this._resScale.target);
     this.renderer.setSize(w, h);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.shadowMap.enabled = GraphicsConfig.SHADOWS_ENABLED;
-    this.renderer.shadowMap.type    = GraphicsConfig.SHADOW_TYPE === 'soft' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    this.renderer.shadowMap.enabled = q.SHADOWS_ENABLED;
+    this.renderer.shadowMap.type    = q.SHADOW_TYPE === 'soft' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.container.appendChild(this.renderer.domElement);
   }
 
@@ -124,6 +132,10 @@ export class Engine {
     this._setupLighting();
     this._setupSky();
     this._setupWater();
+
+    // Low-poly cloud layer — follows the camera like the sky/water do, so the
+    // sky stays populated at any sailing distance (see CloudSystem.js).
+    this.cloudSystem = new CloudSystem(this.scene);
   }
 
   _initSystems() {
@@ -223,7 +235,7 @@ export class Engine {
     this.sunLight = new THREE.DirectionalLight(gc.SUN_COLOR, gc.SUN_INTENSITY);
     this.sunLight.position.set(...gc.SUN_POSITION);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.set(gc.SHADOW_MAP_SIZE, gc.SHADOW_MAP_SIZE);
+    this.sunLight.shadow.mapSize.set(this._quality.SHADOW_MAP_SIZE, this._quality.SHADOW_MAP_SIZE);
     this.sunLight.shadow.camera.near   = gc.SHADOW_NEAR;
     this.sunLight.shadow.camera.far    = gc.SHADOW_FAR;
     const e = gc.SHADOW_EXTENT;
@@ -241,31 +253,92 @@ export class Engine {
   _setupSky() {
     const gc = GraphicsConfig;
 
-    // The stock three.js Sky shader bakes the camera at the world origin
-    // (`cameraPos = vec3(0)`), so the sky dome only renders correctly near the
-    // harbour and would "end" ~5000 m out at sea. Patch it once to use the
-    // real `cameraPosition` uniform (auto-injected by three.js into fragment
-    // shaders) so the sky can follow the camera like the water does — making
-    // the ocean effectively unlimited in every direction.
-    if (!Sky.SkyShader.fragmentShader.includes('cameraPosition')) {
-      Sky.SkyShader.fragmentShader = Sky.SkyShader.fragmentShader
-        .replace('const vec3 cameraPos = vec3( 0.0, 0.0, 0.0 );', '')
-        .replace('normalize( vWorldPosition - cameraPos )', 'normalize( vWorldPosition - cameraPosition )');
-    }
+    // Custom gradient sky dome. Unlike three's Preetham Sky shader (whose HDR
+    // output gets double-exposed by the renderer's tone mapping → washed-out
+    // whites), this shader opts out of tone mapping and writes display-ready
+    // colours, so it renders exactly the palette below — crisp blue day, warm
+    // golden-hour band, dark navy night. The view direction is computed from
+    // `cameraPosition` (auto-injected), so the dome follows the camera like
+    // the water does at any sailing distance.
+    const vertexShader = /* glsl */`
+      varying vec3 vDir;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vDir = normalize(wp.xyz - cameraPosition);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position.z = gl_Position.w;
+      }
+    `;
+    const fragmentShader = /* glsl */`
+      uniform vec3 uSunDir;
+      uniform float uNight;
+      uniform vec3 uDayZenith;
+      uniform vec3 uDayHorizon;
+      uniform vec3 uNightZenith;
+      uniform vec3 uNightHorizon;
+      varying vec3 vDir;
+      void main() {
+        vec3 dir = normalize(vDir);
+        float y = dir.y;
 
-    this.sky = new Sky();
+        // vertical gradient: t = 0 at horizon, 1 at zenith
+        float t = clamp(y * 1.7 + 0.14, 0.0, 1.0);
+        vec3 day   = mix(uDayHorizon,  uDayZenith,  pow(t, 0.72));
+        vec3 night = mix(uNightHorizon,uNightZenith, pow(t, 0.8));
+
+        // golden-hour tint: the horizon warms when the sun is low, strongest
+        // toward the sun's azimuth and fading away from it
+        float sd = clamp(dot(dir, uSunDir), 0.0, 1.0);
+        float sunUp = smoothstep(-0.14, 0.02, uSunDir.y);
+        float gold = smoothstep(0.18, 0.04, abs(uSunDir.y)) * sunUp;
+        float band = exp(-abs(y) * 7.0);
+        float side = 0.40 + 0.60 * pow(max(sd, 0.0), 1.2);
+        vec3 golden = vec3(1.0, 0.50, 0.18); // display (255,128,46)
+        day = mix(day, golden, clamp(band * (0.25 + 0.75 * side) * gold, 0.0, 1.0));
+        vec3 col = mix(day, night, uNight);
+
+        // sun: tight halo + crisp disc (fades as the sun dips below the
+        // horizon; the halo dies within ~10 deg so the blue sky stays clean)
+        float halo = pow(max(sd, 0.0), 56.0);
+        float disc = smoothstep(0.9980, 0.9995, sd);
+        vec3 sunCol = vec3(1.0, 0.96, 0.86); // display (255,245,219)
+        col += sunCol * (disc * 1.0 + halo * 0.32) * sunUp;
+
+        // soft pale haze hugging the horizon by day (fades at golden hour so
+        // the sunset's warm band isn't washed toward pink)
+        col += vec3(0.62, 0.76, 0.93) * exp(-abs(y) * 7.0) * (1.0 - uNight)
+              * (1.0 - gold * band * 0.85) * 0.12; // display (158,194,237)
+
+        // faint moon halo at night (moon sits opposite the sun)
+        float md = clamp(dot(dir, -uSunDir), 0.0, 1.0);
+        col += vec3(0.55, 0.65, 0.90) * pow(md, 22.0) * uNight * 0.16; // display (140,166,230)
+
+        // pass-through pipeline: write display-ready values, no encoding
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false, // sky writes its own final colours — skip ACES
+      uniforms: {
+        uSunDir:        { value: new THREE.Vector3(0, 1, 0) },
+        uNight:         { value: 0 },
+        uDayZenith:     { value: new THREE.Color(gc.SKY_DAY_ZENITH) },
+        uDayHorizon:    { value: new THREE.Color(gc.SKY_DAY_HORIZON) },
+        uNightZenith:   { value: new THREE.Color(gc.SKY_NIGHT_ZENITH) },
+        uNightHorizon:  { value: new THREE.Color(gc.SKY_NIGHT_HORIZON) },
+      },
+      vertexShader,
+      fragmentShader,
+    });
+
+    this.sky = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
     this.sky.scale.setScalar(WorldConfig.OCEAN_SIZE);
+    this.sky.frustumCulled = false; // dome is huge and always on screen
     this.scene.add(this.sky);
-
-    const u = this.sky.material.uniforms;
-    u['turbidity'].value        = gc.SKY_TURBIDITY;
-    u['rayleigh'].value         = gc.SKY_RAYLEIGH;
-    u['mieCoefficient'].value   = gc.SKY_MIE_COEFFICIENT;
-    u['mieDirectionalG'].value  = gc.SKY_MIE_DIRECTIONAL_G;
-
-    const phi   = THREE.MathUtils.degToRad(90 - gc.SKY_ELEVATION);
-    const theta = THREE.MathUtils.degToRad(gc.SKY_AZIMUTH);
-    u['sunPosition'].value.setFromSphericalCoords(1, phi, theta);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(this.sky).texture;
@@ -442,6 +515,23 @@ export class Engine {
     const nightFactor = this.timeSystem ? this.timeSystem.getNightFactor() : 0.0;
     if (this.weatherSystem) this.weatherSystem.update(fd, nightFactor);
 
+    // Perf: only notify the UI when the day/night bucket actually flips, so
+    // the HUD glass theme switches a handful of times, never every frame.
+    const isNight = nightFactor > 0.5;
+    if (isNight !== this._nightPushed) {
+      this._nightPushed = isNight;
+      this.callbacks.onNightChange?.(isNight);
+    }
+
+    // Compass: push the camera heading + harbour bearing to the HUD. Throttled
+    // to whole degrees / 50 m buckets so turning the camera or sailing never
+    // floods React with per-frame updates (see _pushCompass).
+    this._pushCompass(rebasedPos);
+
+    // Clouds drift overhead and re-centre on the camera each frame (the ring
+    // is camera-relative, so floating-origin rebases need no extra handling).
+    this.cloudSystem?.update(fd, nightFactor, this.camera.position);
+
     // Perf: when sailing far from the harbour there is nothing to shadow, yet
     // the whole harbour would otherwise be rendered into the shadow map every
     // frame. Skip the sun's shadow pass entirely out at sea. The TimeSystem
@@ -579,6 +669,7 @@ export class Engine {
     this.loop.stop();
     this.input.destroy();
     this.vegetation.dispose();
+    this.cloudSystem?.dispose();
     this.trash.dispose();
     this.harbour?.dispose();
     this.effects?.dispose();
@@ -620,7 +711,6 @@ export class Engine {
     this.dockTrigger = new THREE.Mesh(triggerGeometry, new THREE.MeshBasicMaterial({ visible: false }));
     this.dockTrigger.position.copy(this.harbour.boatSpawn);
     this.scene.add(this.dockTrigger);
-
   }
 
   _createHarbourBoat() {
@@ -856,6 +946,49 @@ export class Engine {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  //  HUD compass
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Push a compass packet to the UI: camera heading (deg, 0 = +Z "north"),
+   * bearing to the harbour (deg) and straight-line distance (m). Both angles
+   * are bucketed to whole degrees and the distance to 50 m, so the React HUD
+   * only re-renders when something actually changes — never per frame.
+   *
+   * Positions are read AFTER the floating-origin rebase, so the bearing stays
+   * correct at any sailing distance (player and harbour shift together).
+   *
+   * @param {THREE.Vector3} playerPos — character or boat position (post-rebase)
+   */
+  _pushCompass(playerPos) {
+    if (!this.harbour || !this.camera_ctrl || !playerPos) return;
+    // Waypoint = the boat berth (where the player docks to sell trash), not
+    // the plaza centre — so the pin leads back to the actual goal. The berth
+    // is a fixed local offset of the harbour root, so it survives rebases.
+    const berth = this.harbour.boatSpawn;
+    const hx = this.harbour.root.position.x + berth.x;
+    const hz = this.harbour.root.position.z + berth.z;
+    const dx = hx - playerPos.x;
+    const dz = hz - playerPos.z;
+
+    // Camera forward azimuth: forward = -offset dir = (-sin yaw, -cos yaw).
+    // Azimuth convention matches the compass rose (0 = +Z, +90 = +X, CCW+).
+    const yaw = this.camera_ctrl.getYaw();
+    const fwdAz = Math.atan2(-Math.sin(yaw), -Math.cos(yaw));
+    const harbourAz = Math.atan2(dx, dz);
+    const normDeg = (rad) => ((Math.round((rad * 180) / Math.PI) % 360) + 360) % 360;
+
+    const heading = normDeg(fwdAz);
+    const harbour = normDeg(harbourAz);
+    const dist = Math.round(Math.hypot(dx, dz) / 50) * 50; // 50 m buckets
+
+    const last = this._lastCompass;
+    if (last && last.heading === heading && last.harbour === harbour && last.dist === dist) return;
+    this._lastCompass = { heading, harbour, dist };
+    this.callbacks.onCompass?.({ heading, harbour, dist });
   }
 
   // ──────────────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { AssetManager } from '../engine/AssetManager.js';
 import { WorldConfig }  from '../config/WorldConfig.js';
 import { PerformanceConfig } from '../config/PerformanceConfig.js';
 import { BoatConfig }   from '../config/BoatConfig.js';
+import { MissionConfig } from '../config/MissionConfig.js';
 
 /**
  * TrashSystem.js — Manages trash spawning, proximity detection, and reel pickup.
@@ -194,7 +195,7 @@ export class TrashSystem {
         this.activeReels.splice(i, 1);
 
         this.trashCount++;
-        this.score += 50;
+        this.score += MissionConfig.SCORE_PER_TRASH;
         this.callbacks.onCollect?.(this.score, this.trashCount);
       } else {
         const cur = new THREE.Vector3().lerpVectors(reel.startPos, deckPos, reel.progress);

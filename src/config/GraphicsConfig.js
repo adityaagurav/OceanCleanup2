@@ -19,6 +19,33 @@ export const GraphicsConfig = {
   SHADOW_FAR:      600,
   SHADOW_EXTENT:   200, // left/right/top/bottom of shadow camera
 
+  // ── Quality presets (Engine applies these at renderer init) ───
+  // Selected via Settings → Graphics, read from Engine options.quality.
+  // Keys are the subset of this config the presets may override.
+  QUALITY_PRESETS: {
+    low: {
+      ANTIALIAS: false,
+      MAX_PIXEL_RATIO: 1.0,
+      SHADOWS_ENABLED: false,
+      SHADOW_TYPE: 'pcf',
+      SHADOW_MAP_SIZE: 1024,
+    },
+    balanced: {
+      ANTIALIAS: true,
+      MAX_PIXEL_RATIO: 1.5,
+      SHADOWS_ENABLED: true,
+      SHADOW_TYPE: 'pcf',
+      SHADOW_MAP_SIZE: 1024,
+    },
+    high: {
+      ANTIALIAS: true,
+      MAX_PIXEL_RATIO: 2.0,
+      SHADOWS_ENABLED: true,
+      SHADOW_TYPE: 'soft',
+      SHADOW_MAP_SIZE: 2048,
+    },
+  },
+
   // ── Camera ─────────────────────────────────────────────────────
   FOV:       60,
   NEAR:      0.3,
@@ -48,10 +75,13 @@ export const GraphicsConfig = {
   SUN_POSITION:      [150, 200, 100],
 
   // ── Sky ────────────────────────────────────────────────────────
-  SKY_TURBIDITY:          10,
-  SKY_RAYLEIGH:           2,
-  SKY_MIE_COEFFICIENT:    0.005,
-  SKY_MIE_DIRECTIONAL_G:  0.8,
-  SKY_ELEVATION:          3,   // degrees
-  SKY_AZIMUTH:            180, // degrees
+  // The sky is a custom gradient shader (see Engine._setupSky) — no Preetham
+  // wash-out, no double gamma. Palette colours below are DISPLAY sRGB hex;
+  // the engine converts them to linear before uploading. The day horizon is
+  // matched to the day fog colour (WeatherSystem) and the night horizon to the
+  // night fog so the horizon seam disappears.
+  SKY_DAY_ZENITH:   0x2e6fc3, // deep clean blue overhead
+  SKY_DAY_HORIZON:  0xcce0ff, // pale blue at the horizon (= day fog)
+  SKY_NIGHT_ZENITH: 0x04070f, // near-black navy at night
+  SKY_NIGHT_HORIZON: 0x0a1526, // dark navy horizon (= night fog)
 };
