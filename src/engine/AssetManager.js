@@ -1,4 +1,5 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as THREE from 'three';
 
@@ -17,6 +18,11 @@ class AssetManagerClass {
     this._gltfCache    = new Map(); // path → Promise<GLTF>
     this._textureCache = new Map(); // path → Promise<Texture>
     this._gltfLoader   = new GLTFLoader();
+
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+    this._gltfLoader.setDRACOLoader(dracoLoader);
+
     this._fbxLoader    = new FBXLoader();
     this._texLoader    = new THREE.TextureLoader();
   }

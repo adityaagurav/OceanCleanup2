@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
 import { BiomeManager, Biomes } from './BiomeManager.js';
 import { PerformanceConfig } from '../config/PerformanceConfig.js';
+import { WorldConfig } from '../config/WorldConfig.js';
 
 /**
  * TerrainGenerator.js — Generates procedural geometry for chunks using Simplex noise.
@@ -81,15 +82,32 @@ export class TerrainGenerator {
 
   /**
    * Helper: Elevation for a world position.
-   *
-   * The ocean is fully open and effectively unlimited — the harbour plaza is
-   * the ONLY landmass in the game. No procedural islands are generated, so the
-   * player can sail in any direction forever without hitting terrain. Future
-   * islands/locations (WorldConfig.ISLANDS) can be reintroduced here later;
-   * for now every chunk is flat shallow seabed just below the water surface.
+   * Generates flat seabed near harbour, and tropical island landmasses for WorldConfig.ISLANDS.
    */
   _getElevation(x, z) {
-    return -0.125 * this.maxHeight; // flat shallow seabed (=-1.5)
+    const hCenter = WorldConfig.HARBOUR_CENTER || [0, 12];
+    const hDist = Math.hypot(x - hCenter[0], z - hCenter[1]);
+    if (hDist < 260) {
+      return -1.5; // flat seabed near harbour
+    }
+
+    let islandHeight = -1.5;
+    if (WorldConfig.ISLANDS) {
+      for (const island of WorldConfig.ISLANDS) {
+        const [cx, cy, cz] = island.center;
+        const dx = x - cx;
+        const dz = z - cz;
+        const dist = Math.hypot(dx, dz);
+        if (dist < island.radius * 1.5) {
+          const t = Math.max(0, 1 - dist / (island.radius * 1.2));
+          const n = (this.noise2D(x * 0.02, z * 0.02) + 1) * 0.5;
+          const elev = Math.pow(t, 1.5) * 8.0 + n * 1.5;
+          if (elev > islandHeight) islandHeight = elev;
+        }
+      }
+    }
+
+    return islandHeight;
   }
 
   getMoisture(x, z) {

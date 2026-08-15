@@ -199,8 +199,10 @@ export class ChunkManager {
   }
 
   _generateChunkVegetation(cx, cz, key) {
+    const PALM_TREE = 'assets/landAsset/coconut-palm.glb';
+
     const TROPICAL_PLANTS = [
-      'nature_kit/Tree.glb',
+      PALM_TREE,
       'nature_kit/Bush with Flowers.glb',
       'nature_kit/Plant Big.glb',
       'nature_kit/Fern.glb',
@@ -209,8 +211,7 @@ export class ChunkManager {
     ];
 
     const FOREST_PLANTS = [
-      'nature_kit/Pine.glb',
-      'nature_kit/Tree.glb',
+      PALM_TREE,
       'nature_kit/Bush.glb',
       'nature_kit/Mushroom.glb',
       'nature_kit/Mushroom Laetiporus.glb',
@@ -222,8 +223,7 @@ export class ChunkManager {
     ];
 
     const ROCKY_PLANTS = [
-      'nature_kit/Dead Tree.glb',
-      'nature_kit/Twisted Tree.glb',
+      PALM_TREE,
       'nature_kit/Rock Medium.glb',
       'nature_kit/Pebble Round.glb',
       'nature_kit/Rock Path Round Small.glb',
@@ -245,6 +245,7 @@ export class ChunkManager {
     ];
 
     const BEACH_PLANTS = [
+      PALM_TREE,
       'nature_kit/Plant.glb',
       'nature_kit/Pebble Round.glb',
       'nature_kit/Grass Wispy.glb'
@@ -285,7 +286,9 @@ export class ChunkManager {
         let scale = 0.8 + Math.random() * 0.4;
         
         // Adjust scale based on what it is so grass isn't huge and rocks aren't tiny
-        if (randomModel.includes('Grass') || randomModel.includes('Mushroom') || randomModel.includes('Flower') || randomModel.includes('Clover') || randomModel.includes('Plant') || randomModel.includes('Fern')) {
+        if (randomModel === PALM_TREE) {
+          scale *= 2.2; // Base scale for coconut palm
+        } else if (randomModel.includes('Grass') || randomModel.includes('Mushroom') || randomModel.includes('Flower') || randomModel.includes('Clover') || randomModel.includes('Plant') || randomModel.includes('Fern')) {
           scale *= 0.5;
         } else if (randomModel.includes('Rock') || randomModel.includes('Pebble')) {
           scale *= 0.6;
@@ -297,10 +300,12 @@ export class ChunkManager {
           scale *= 1.2;
         }
 
+        const isPalm = (randomModel === PALM_TREE);
         placementsByModel.get(randomModel).push({
           pos: new THREE.Vector3(wx, height, wz),
           rotY: Math.random() * Math.PI * 2,
-          scale: scale
+          scale: scale,
+          scaleY: isPalm ? scale * 1.35 : scale // Make coconut palm trees longer / taller vertically!
         });
       }
     }

@@ -173,9 +173,9 @@ export class Engine {
       preloadDistance: PerformanceConfig.CHUNK_PRELOAD_DISTANCE,
     });
     
-    // Spawn the player on the harbour pier (the only landmass at the start).
-    // _setupHarbor repositions onto the exact pier coordinates once it runs.
-    const spawnPos = new THREE.Vector3(0, 3, 73); // falls onto the shore platform
+    // Spawn the player on the harbour's rear base platform.
+    // _setupHarbor repositions onto the exact harbour spawn coordinates once it runs.
+    const spawnPos = new THREE.Vector3(0, 1.5, -2);
     this.character.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
     
     // Initialize first chunks around player
@@ -566,14 +566,14 @@ export class Engine {
     }
 
     if (GameState.is('HARBOR')) {
-      // Harbor mode: character controls
+      // Harbor mode: character controls (interpolate character transform first, then update camera)
+      this.character.renderUpdate(alpha, fd, this.camera_ctrl);
       this.camera_ctrl.update(
         this.character.getPosition(),
         this.character.yaw,
         this.input,
         fd
       );
-      this.character.renderUpdate(fd, this.camera_ctrl);
       this.trash.updateReels(this.character.getDeckPosition());
       if (this.missionActive) {
         this.callbacks.onTick?.(this.character.speed * 1.94384);
@@ -696,7 +696,11 @@ export class Engine {
     this.harbour = new HarbourManager(this.scene, this.colliders, this.wallColliders);
     // Keep the wave field's calm centre on the actual harbour.
     this.waveSampler.setHarborCenter(WorldConfig.HARBOUR_CENTER[0], WorldConfig.HARBOUR_CENTER[1]);
-    this.character.setPosition(...this.harbour.playerSpawn);
+    this.character.setPosition(this.harbour.playerSpawn.x, this.harbour.playerSpawn.y, this.harbour.playerSpawn.z);
+
+    // Foundation step: the harbour is only the rear base platform — no boat /
+    // pier yet, so there is nothing more to set up (boatSpawn is null).
+    if (!this.harbour.boatSpawn) return;
 
     // A procedural sailboat keeps the gameplay-facing direction and the
     // visible bow in the same local -Z direction.
@@ -965,6 +969,8 @@ export class Engine {
    */
   _pushCompass(playerPos) {
     if (!this.harbour || !this.camera_ctrl || !playerPos) return;
+    // No boat berth exists on the foundation-only harbour yet.
+    if (!this.harbour.boatSpawn) return;
     // Waypoint = the boat berth (where the player docks to sell trash), not
     // the plaza centre — so the pin leads back to the actual goal. The berth
     // is a fixed local offset of the harbour root, so it survives rebases.

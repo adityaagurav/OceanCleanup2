@@ -15,18 +15,18 @@ export const WorldConfig = {
   // shallow seabed everywhere, so the harbour plaza is the only landmass and
   // the player can sail in any direction without hitting terrain.
   ISLANDS: [
-    { center: [4200, 0, 4600], radius: 90  },
-    { center: [-4500, 0, 3800], radius: 70  },
-    { center: [5200, 0, -4200], radius: 110 },
-    { center: [-4800, 0, -4600], radius: 80  },
-    { center: [3900, 0, 5600], radius: 65  },
+    { center: [380, 0, 380],   radius: 95 },
+    { center: [-420, 0, 320],  radius: 85 },
+    { center: [520, 0, -380],  radius: 110 },
+    { center: [-480, 0, -420], radius: 90 },
+    { center: [100, 0, 680],   radius: 100 },
   ],
 
   // ── Harbour / open ocean ───────────────────────────────────────
   // A large band of guaranteed open water around the harbour. The harbour is
   // the only landmass the player begins on; no terrain islands are generated
   // within this radius, so sailing away feels open, spacious and unobstructed.
-  HARBOUR_CENTER: [0, 80],
+  HARBOUR_CENTER: [0, 12],
   OCEAN_CLEARING_RADIUS: 700,
 
   /** Blob count range for organic island shapes [min, max] */
@@ -34,11 +34,10 @@ export const WorldConfig = {
 
   // ── Vegetation density (multiplied by area ratio) ──────────────
   VEGETATION: [
-    { path: 'nature_kit/Pine.glb',        baseCount: 12, scale: 2.5 },
-    { path: 'nature_kit/Tree.glb',        baseCount: 8,  scale: 2.5 },
-    { path: 'nature_kit/Rock Medium.glb', baseCount: 20, scale: 2.0 },
-    { path: 'nature_kit/Bush.glb',        baseCount: 30, scale: 1.5 },
-    { path: 'nature_kit/Grass.glb',       baseCount: 60, scale: 1.2 },
+    { path: 'assets/landAsset/coconut-palm.glb', baseCount: 20, scale: 3.2 },
+    { path: 'nature_kit/Rock Medium.glb',        baseCount: 20, scale: 2.0 },
+    { path: 'nature_kit/Bush.glb',               baseCount: 30, scale: 1.5 },
+    { path: 'nature_kit/Grass.glb',              baseCount: 60, scale: 1.2 },
   ],
 
   // ── Trash ──────────────────────────────────────────────────────

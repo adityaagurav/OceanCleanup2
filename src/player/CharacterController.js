@@ -35,11 +35,13 @@ export class CharacterController {
     this.group = this._char.root;
 
     // ── Physics state ───────────────────────────────────────────────
-    this.position    = new THREE.Vector3(0, 5, 0);
-    this.velocity    = new THREE.Vector3();
-    this.yaw         = 0;
-    this.isGrounded  = false;
-    this.wasGrounded = false;
+    this.position     = new THREE.Vector3(0, 5, 0);
+    this.prevPosition = new THREE.Vector3(0, 5, 0);
+    this.velocity     = new THREE.Vector3();
+    this.yaw          = 0;
+    this.prevYaw      = 0;
+    this.isGrounded   = false;
+    this.wasGrounded  = false;
 
     // ── Animation state ─────────────────────────────────────────────
     this.currentStateName = 'Idle';
@@ -59,8 +61,20 @@ export class CharacterController {
   // ─────────────────────────────────────────────────────────────────────────
 
   setPosition(x, y, z) {
+    if (typeof x === 'object' && x !== null) {
+      y = x.y;
+      z = x.z;
+      x = x.x;
+    }
     this.position.set(x, y, z);
+    this.prevPosition.set(x, y, z);
     this.group.position.copy(this.position);
+  }
+
+  rebase(offset) {
+    this.position.sub(offset);
+    this.prevPosition.sub(offset);
+    this.group.position.sub(offset);
   }
 
   getPosition() { return this.group.position.clone(); }
@@ -84,6 +98,10 @@ export class CharacterController {
    * @param {number} dt  — fixed delta (1/60)
    */
   fixedUpdate(input, camCtrl, dt) {
+    // Store previous physics state before integration
+    this.prevPosition.copy(this.position);
+    this.prevYaw = this.yaw;
+
     // ── 1. Camera-relative input direction (no charYaw dependency) ──
     const camForward = camCtrl.getCameraForward();
     const camRight   = camCtrl.getCameraRight();
@@ -150,20 +168,33 @@ export class CharacterController {
       this.yaw += diff * Math.min(TURN_SPEED * dt, 1);
     }
 
-    // ── 9. Apply to scene ───────────────────────────────────────────
-    this.group.position.copy(this.position);
-    this.group.rotation.y = this.yaw;
-
-    // ── 10. Resolve animation state ─────────────────────────────────
+    // ── 9. Resolve animation state ─────────────────────────────────
     this._resolveState(input);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  Render Update — every frame, drives visual animation
+  //  Render Update — every frame, sub-frame interpolation + visual animation
   // ─────────────────────────────────────────────────────────────────────────
 
-  renderUpdate(frameDelta, camCtrl) {
-    this._char.update(this.currentStateName, this.speed, frameDelta);
+  renderUpdate(alpha, frameDelta, camCtrl) {
+    let fd = frameDelta;
+    if (typeof alpha === 'number' && typeof frameDelta === 'number') {
+      // Sub-frame interpolation for smooth movement at any refresh rate
+      this.group.position.lerpVectors(this.prevPosition, this.position, alpha);
+
+      let diff = this.yaw - this.prevYaw;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff >  Math.PI) diff -= Math.PI * 2;
+      this.group.rotation.y = this.prevYaw + diff * alpha;
+    } else {
+      // Fallback if called as renderUpdate(frameDelta, camCtrl)
+      fd = alpha;
+      camCtrl = frameDelta;
+      this.group.position.copy(this.position);
+      this.group.rotation.y = this.yaw;
+    }
+
+    this._char.update(this.currentStateName, this.speed, fd);
 
     // Hide head in First-Person view to prevent clipping
     if (camCtrl) {

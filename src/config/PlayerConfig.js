@@ -19,7 +19,7 @@ export const PlayerConfig = {
 
   // ── Ground detection ───────────────────────────────────────────
   RAY_ORIGIN_OFFSET: 2.0,   // ray starts this far above character feet
-  RAY_SNAP_THRESHOLD: 2.05, // snap to ground if hit within this distance
+  RAY_SNAP_THRESHOLD: 2.4,  // snap to ground if hit within this distance
 
   // ── Model ──────────────────────────────────────────────────────
   MODEL_PATH:  'Adventurer.glb',

@@ -76,7 +76,8 @@ export class VegetationSystem {
       this._dummy.position.copy(p.pos);
       this._dummy.rotation.set(0, p.rotY, 0);
       const s = p.scale ?? 1;
-      this._dummy.scale.set(s, s, s);
+      const sy = p.scaleY ?? s;
+      this._dummy.scale.set(s, sy, s);
       this._dummy.updateMatrix();
       return this._dummy.matrix.clone();
     });

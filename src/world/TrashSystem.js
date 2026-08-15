@@ -288,18 +288,9 @@ export class TrashSystem {
 
   _place(obj) {
     const isLand = (x, z) => {
-      // Harbour landmass: main plaza (x -130..130, z 0..70) + rear yard (z -60..0)
-      if (x >= -130 && x <= 130 && z >= -60 && z <= 70) return true;
-      // P0 central unloading pier: x -6..6, z 70..150
-      if (x >= -6.5 && x <= 6.5 && z >= 70 && z <= 150) return true;
-      // P1 east boat pier: x 10..24, z 70..130
-      if (x >= 9.5 && x <= 24.5 && z >= 70 && z <= 130) return true;
-      // P2 east industrial pier: x 30..42, z 70..140
-      if (x >= 29.5 && x <= 42.5 && z >= 70 && z <= 140) return true;
-      // P3 west boat pier: x -24..-10, z 70..130
-      if (x >= -24.5 && x <= -9.5 && z >= 70 && z <= 130) return true;
-      // P4 west maintenance pier: x -42..-30, z 70..140
-      if (x >= -42.5 && x <= -29.5 && z >= 70 && z <= 140) return true;
+      // Rear base platform: 50 m × 30 m (x -25..25, z -30..0). Nothing spawns
+      // on the concrete so the foundation stays clean and empty.
+      if (x >= -25 && x <= 25 && z >= -30 && z <= 0) return true;
       return false;
     };
 
@@ -308,16 +299,18 @@ export class TrashSystem {
     const maxAttempts = 100;
 
     while (attempts < maxAttempts) {
-      // We want a good density near the harbor, so let's make 25% of the trash spawn closer to the harbor.
-      // The harbor center is around (0, 80).
+      // Good density near the harbour: 25% of the trash spawns just off the
+      // harbour mouth (the boat's first cleanup runs), the rest across the ocean.
       const spawnNearHarbor = Math.random() < 0.25;
 
       if (spawnNearHarbor) {
-        // Spawn near harbor: center (0, 80), radius 15 to 250
-        const d = 15 + Math.random() * 235;
+        // Spawn near the rear base platform centre (0, -15), radius 20 to 300
+        // — the min radius clears the platform, so trash rings it without
+        // landing on it.
+        const d = 20 + Math.random() * 280;
         const a = Math.random() * Math.PI * 2;
         px = Math.cos(a) * d;
-        pz = 80 + Math.sin(a) * d;
+        pz = -15 + Math.sin(a) * d;
       } else {
         // Original spawn logic around (0, 0)
         const d = WorldConfig.TRASH_MIN_DIST + Math.random() * (WorldConfig.TRASH_MAX_DIST - WorldConfig.TRASH_MIN_DIST);
