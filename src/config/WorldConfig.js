@@ -26,7 +26,7 @@ export const WorldConfig = {
   // A large band of guaranteed open water around the harbour. The harbour is
   // the only landmass the player begins on; no terrain islands are generated
   // within this radius, so sailing away feels open, spacious and unobstructed.
-  HARBOUR_CENTER: [0, 12],
+  HARBOUR_CENTER: [0, 21.5], // follows the (lengthened) boat dock area
   OCEAN_CLEARING_RADIUS: 700,
 
   /** Blob count range for organic island shapes [min, max] */

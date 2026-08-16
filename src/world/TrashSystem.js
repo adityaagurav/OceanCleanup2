@@ -288,9 +288,22 @@ export class TrashSystem {
 
   _place(obj) {
     const isLand = (x, z) => {
-      // Rear base platform: 50 m × 30 m (x -25..25, z -30..0). Nothing spawns
-      // on the concrete so the foundation stays clean and empty.
-      if (x >= -25 && x <= 25 && z >= -30 && z <= 0) return true;
+      // Rear base platform: 50 m × 40 m (x -25..25, z -40..0) — extended
+      // south for the Part 4 rear land + main building. Nothing spawns on the
+      // concrete so the foundation stays clean and empty.
+      if (x >= -25 && x <= 25 && z >= -40 && z <= 0) return true;
+      // PART 1 central pier (4 m × 20 m) + docking platform (5 m × 3 m) — the
+      // wooden deck is land too, so trash never embeds in it.
+      if (x >= -2 && x <= 2 && z >= 0 && z <= 20) return true;
+      if (x >= -2.5 && x <= 2.5 && z >= 20 && z <= 23) return true;
+      // PART 2 left wing (15 m × 40 m, x -25..-10, z 0..40).
+      if (x >= -25 && x <= -10 && z >= 0 && z <= 40) return true;
+      // PART 3 right wing (15 m × 40 m, x 10..25, z 0..40) — mirror of the
+      // left wing around X = 0.
+      if (x >= 10 && x <= 25 && z >= 0 && z <= 40) return true;
+      // PART 4 rear land — the shoreline berm behind the platform
+      // (x -25..25, z -44..-40) is above water, so trash never embeds in it.
+      if (x >= -25 && x <= 25 && z >= -44 && z <= -40) return true;
       return false;
     };
 
