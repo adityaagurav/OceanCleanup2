@@ -18,13 +18,31 @@ export const BoatConfig = {
   // The "heavy" layer: throttle is a smooth progressive ramp (never a hard
   // 0→100%), acceleration pushes the hull through water, and releasing the
   // throttle leaves ONLY quadratic water drag so the boat coasts and slowly
-  // settles instead of stopping instantly.
+  // settles instead of stopping instantly. Pressing S never snaps the velocity
+  // to zero — it brakes with a speed-scaled deceleration, settles cleanly to a
+  // stop inside a dead zone, and only then (after a short engage beat) allows
+  // the hull to creep backward while S stays held.
   INERTIA: {
     THROTTLE_RAMP:  2.2,   // throttle smoothing (1/s) — progressive 0→100%
     ACCELERATION:   4.2,   // m/s² full-throttle thrust — pushes through water
     DRAG_LINEAR:    0.10,  // linear water drag (1/s) — kills low-speed creep
     DRAG_QUAD:      0.045, // quadratic water drag (1/m) — the heavy coast feel
-    BRAKE_FORCE:    7.0,   // m/s² braking while thrusting against motion (S)
+
+    // Braking (S while moving forward): the hull digs in against its motion.
+    // Stronger than plain water drag (S clearly brakes) but far gentler than an
+    // instant stop — from max speed (~8 m/s) the boat comes to rest in roughly
+    // 1.3 s, and the speed scale makes high-speed stops take more distance and
+    // time than low-speed ones, so the hull feels heavier the faster it goes.
+    BRAKE_FORCE:        3.2,   // m/s² base braking deceleration
+    BRAKE_SPEED_SCALE:  0.35,  // extra m/s² per m/s of speed (heavier at speed)
+
+    // Zero-velocity handling: braking never flips the hull across zero. Once
+    // the speed drops inside DEAD_ZONE the boat settles smoothly to a stop
+    // (kills sign-flip jitter at a standstill), and if reverse is still held it
+    // waits REVERSE_ENGAGE_DELAY before creeping backward, so the sequence
+    // reads brake → stop → pause → reverse.
+    DEAD_ZONE:            0.40, // m/s — braking settles to a full stop below this
+    REVERSE_ENGAGE_DELAY: 0.28, // s — held at a stop before reverse engages
     COAST_STOP:     0.15,  // m/s below which coasting settles to a full stop
 
     // Steering inertia: the helm (wheel) angle is smoothed, and the yaw RATE

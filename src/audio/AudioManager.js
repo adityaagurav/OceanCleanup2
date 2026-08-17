@@ -3,7 +3,7 @@ class SoundController {
   constructor() {
     this.ctx = null;
     this.master = null; // shared master gain — one mute/volume for ALL audio
-    this.muted = false;
+    this.muted = true;
     this.volume = 0.7;
   }
 

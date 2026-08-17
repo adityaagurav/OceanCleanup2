@@ -10,11 +10,11 @@ import { AssetManager } from '../engine/AssetManager.js';
  */
 export class VegetationSystem {
   constructor(scene) {
-    this.scene  = scene;
+    this.scene = scene;
 
     // modelPath -> { mesh, geo, mat, capacity }
     this._models = new Map();
-    
+
     // modelPath -> Map<chunkKey, Matrix4[]>
     this._chunkData = new Map();
 
@@ -22,7 +22,7 @@ export class VegetationSystem {
     // debounced so each model type is rebuilt at most once per frame instead
     // of once per chunk).
     this._dirty = new Set();
-    
+
     this._dummy = new THREE.Object3D();
   }
 
@@ -34,7 +34,7 @@ export class VegetationSystem {
 
     const gltf = await AssetManager.loadGLTF(path);
     let sourceMesh = null;
-    
+
     gltf.scene.traverse(child => {
       if (child.isMesh && !sourceMesh) {
         sourceMesh = child;
@@ -49,7 +49,7 @@ export class VegetationSystem {
       mat: sourceMesh.material,
       capacity: 0
     });
-    
+
     this._chunkData.set(path, new Map());
   }
 
@@ -64,13 +64,13 @@ export class VegetationSystem {
    */
   async addChunkVegetation(chunkKey, path, placements, isStillActive = null) {
     if (placements.length === 0) return;
-    
+
     // Ensure model is loaded
     if (!this._models.has(path)) {
       await this.prepareModel(path);
       if (isStillActive && !isStillActive()) return; // chunk gone while loading
     }
-    
+
     // Convert placements to Matrix4 array immediately
     const matrices = placements.map(p => {
       this._dummy.position.copy(p.pos);
@@ -131,13 +131,13 @@ export class VegetationSystem {
         this.scene.remove(model.mesh);
         model.mesh.dispose(); // dispose old mesh shell (geo/mat are shared)
       }
-      
+
       const newCapacity = Math.max(totalInstances + 500, 1000); // Pad capacity to avoid frequent recreations
       const mesh = new THREE.InstancedMesh(model.geo, model.mat, newCapacity);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.frustumCulled = true; // enabled after computeBoundingSphere() below
-      
+
       this.scene.add(mesh);
       model.mesh = mesh;
       model.capacity = newCapacity;
@@ -150,7 +150,7 @@ export class VegetationSystem {
         model.mesh.setMatrixAt(idx++, matrix);
       }
     }
-    
+
     // Set actual draw count
     model.mesh.count = totalInstances;
     model.mesh.instanceMatrix.needsUpdate = true;

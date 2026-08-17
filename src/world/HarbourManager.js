@@ -4,77 +4,74 @@ import { AssetManager } from '../engine/AssetManager.js';
 /**
  * HarbourManager.js — The harbour's compact U-shaped starting hub.
  *
- * PART 1 — CENTRAL GAMEPLAY AREA (built):
- *   - HarbourEntrance (50 × 30 m platform), CentralPier (4 × 20 m wooden
- *     deck, z 0..20), CentralDock (5 × 3 m T-head, z 20..23),
- *     CentralWaterChannel, BoatDockPoint at (5.5, 0, 21.5) facing +z, and
- *     basic beach shoreline.
+ * The layout is a clean U: a large rectangular rear base platform with two
+ * narrow concrete arms extending forward (+z, toward the ocean) from its left
+ * and right ends. The space between the arms is open water — the central boat
+ * channel — with the wooden central pier + T-dock running out from the middle
+ * of the rear base (kept as the current boat berth / future central pier).
  *
- * PART 2 — LEFT WING (built + length-corrected):
- *   - LeftPlatform: a 15 m wide × 40 m long concrete walkway (x -25..-10,
- *     z 0..40, top y = 1.2), flush with the platform's left edge — the U's
- *     long left arm, bounding the central channel on its -x side.
- *   - Dock edge: fender strip + mooring bollards along the inner face.
- *   - ONE medium harbour crane (decorative) at the rear-outer section, jib
- *     reaching inward over the water.
- *   - Small props near the edges (crates, barrels, containers, rope coils,
- *     life ring, rolled net) — nothing in the channel.
- *   - Safety railing along the outer edge + far end.
- *   - Small palm cluster at the wing's rear corner (perimeter only).
- *   - Collision: invisible walls keep the player on the deck; invisible
- *     below-deck fills stop the boat at the wing/pier faces.
+ * PART 1 — CENTRAL GAMEPLAY AREA (rebuilt as pier → end platform):
+ *   - CentralPier: a 5.5 m wide × 27 m long wooden deck (x -2.75..2.75,
+ *     z 0..27, top y = 1.2) starting from the middle of the rear base's front
+ *     edge (x = 0) and running straight through the open channel, exactly
+ *     centered between the two U arms.
+ *   - EndPlatform: an 8 m × 8 m × 1.2 m square concrete head (z 27..35) at
+ *     the pier's far end — same concrete / thickness / height as the rear
+ *     base, overhanging the 5.5 m pier by 1.25 m on each side. Surrounded by
+ *     water on all sides except the pier connection behind it; never touches
+ *     the arms. BoatDockPoint at (5.75, 0, 31), facing +z out the mouth.
  *
- * PART 3 — RIGHT WING (built; symmetry-corrected):
- *   - RightPlatform: a 15 m wide × 40 m long concrete walkway (x 10..25,
- *     z 0..40, top y = 1.2) — the exact MIRROR of the left wing around
- *     X = 0 (RightX = -LeftX, same length / width / height). Inner edge at
- *     x = +10 matches the left's -10, so the central channel is 20 m wide
- *     and perfectly centered on X = 0.
- *   - Mirrored medium crane (same scale / height / distance from rear and
- *     water, jib pointing inward).
- *   - Mirrored dock edge (fender + bollards), railings, boundary walls and
- *     prop layout (decorative items are allowed to differ).
+ * PART 2 — LEFT ARM (reshaped to the U):
+ *   - LeftArm: an 8 m wide × 27 m long concrete slab (x -25..-17, z 0..27,
+ *     top y = 1.2) flush with the rear base's left edge — the U's left side,
+ *     bounding the central channel on its -x side. Same concrete material + 
+ *     1.2 m thickness as the rear base, so the connection is seamless and the
+ *     top surfaces stay flat and level. The inner face (x = -17) is the
+ *     future docking edge: fender strip + mooring bollards. The outer edge
+ *     and far end carry the safety railing; the far end is clean and
+ *     squared-off. Prop clusters sit on the arm surface (moved off the old
+ *     inner edge so nothing sits in the channel); the rear-left harbour
+ *     crane (crane.glb) stands on the rear base behind it.
  *
- * PART 4 — REAR SECTION (built; building placement CORRECTED):
- *   - The central channel (x -10..10) is completely OPEN from the dock to the
- *     ocean — no structure sits inside the navigation space.
- *   - Main harbour building at the rear-centre of the LAND (x -4..4,
- *     z -37.75..-32.25): a compact low-poly office/warehouse on the extended
- *     rear platform, on solid ground behind the harbour's rear land — never
+ * PART 3 — RIGHT ARM (reshaped; exact mirror of the left around X = 0):
+ *   - RightArm: an 8 m wide × 27 m long concrete slab (x 17..25, z 0..27) —
+ *     the U's right side. Inner edge at x = +17 matches the left's -17, so
+ *     the open channel between the arms is perfectly centered on X = 0.
+ *     Mirrored crane (crane.glb), dock edge (fender + bollards), railings,
+ *     boundary walls and prop layout (structure mirrored, decoration not).
+ *
+ * PART 4 — REAR SECTION (kept as-is):
+ *   - Main harbour building at the rear-centre of the rear base (x -4..4,
+ *     z -37.75..-32.25) on solid ground behind the harbour's rear land, never
  *     in the water. Door + windows face +z (toward the pier / player), so it
  *     reads as the shore-side landmark seen when returning from the boat.
- *   - Both cranes stand on the rear land (x ±20, z -33), flanking the
- *     building (CRANE · BUILDING · CRANE) at the rear-left / rear-right.
- *   - The platform's rear land was extended south (z -30 → -40) to give the
- *     building solid ground; the natural shoreline (berm, rocks, palms) moved
- *     behind it (z -39..-44).
+ *     Both harbour cranes (the shared 'landAsset/Crane.glb', replacing the
+ *     old procedural placeholders — no duplicates) stand on the rear land at
+ *     (x ±21.5, z -33), flanking the building site (CRANE · BUILDING · CRANE)
+ *     with their booms reaching inward toward the central water / docking
+ *     area. The rear shoreline (berm, rocks, palms) sits behind the platform
+ *     (z -44..-40).
  *
- * PART 5 — ENVIRONMENTAL DETAIL (built):
- *   - Detail clusters along both arms with CLUSTER · GAP · CLUSTER rhythm
- *     (southern cluster near the platform + mid + far), mostly near the
- *     outer edge; the right arm's clusters are composed differently from
- *     the left's (structure mirrored, decoration not).
- *   - Shared prop geometry set (this._geo) — one crate / barrel / container
- *     / coil / ring / net / piling / bollard reused by every arm + cluster.
- *   - Grounded outer-perimeter boulders along both wing faces + framing the
- *     harbour mouth (seabed-anchored, never floating); the central channel
- *     stays completely clear.
+ * PART 5 — ENVIRONMENTAL DETAIL (kept, adjusted to the U):
+ *   - Detail clusters along both arms (CLUSTER · GAP · CLUSTER rhythm),
+ *     moved onto the arm surfaces — nothing sits in the open channel.
+ *   - Outer-perimeter boulders along both arm faces + framing the harbour
+ *     mouth OUTSIDE the channel (seabed-anchored, never floating); the
+ *     central channel stays completely clear.
  *   - Water details: 4 bobbing buoys (visual only) + small floating debris
- *     outside the channel; palms only near the building / corners.
- *
- * LATER PARTS (not built yet): further decoration.
+ *     OUTSIDE the channel / beyond the harbour mouth.
  *
  * Layout (top view, +z = ocean):
- *     OCEAN (+z) — the channel mouth (z = 40) stays fully open; the boat
- *     exits / returns straight north with nothing in its way
- *     LEFT WING  │ BOAT DOCK → boat (+5.5, +21.5) facing +z  │ RIGHT WING
- *     (x -25..-10, │ CENTRAL DOCK (z 20..23)                │ (x +10..+25,
- *      z 0..40)   │ CENTRAL PIER (z 0..20)  OPEN CHANNEL    │  z 0..40)
- *                 │
- *     PLATFORM / PLAYER ENTRANCE (z -40..0)
+ *     OCEAN (+z) — the channel mouth (x -17..17) stays open around the
+ *     square end platform; boats enter, turn and dock on either side
+ *     LEFT ARM    │ BOAT DOCK → boat (+5.75, +31) facing +z   │ RIGHT ARM
+ *     (x -25..-17,│ END PLATFORM (8 × 8 m, z 27..35)          │ (x +17..+25,
+ *      z 0..27)   │ CENTRAL PIER (z 0..27, x -2.75..2.75)     │  z 0..27)
+ *                 │  future berths along both inner faces (±17)
+ *     REAR BASE PLATFORM (x -25..25, z -40..0) — the U's back section
  *        CRANE   MAIN BUILDING (x -4..4, z -37.75..-32.25)   CRANE
  *     (rear-left)          (faces +z)              (rear-right)
- *     REAR LAND / SHORELINE (z -44..-40 — berm, rocks, palms)
+ *     REAR SHORELINE (z -44..-40 — berm, rocks, palms)
  */
 export class HarbourManager {
   /**
@@ -97,15 +94,14 @@ export class HarbourManager {
     // inside the boat, geometry or water.
     this.playerSpawn = new THREE.Vector3(0, 1.5, -3);
     // BoatDockPoint: the canonical boat position — docked to the RIGHT (+x)
-    // side of the central docking platform, facing +z out the central water
-    // channel (the engine sets rotation.y = π so the bow points +z). 3 m clear
-    // of the dock, not intersecting seabed, deck or player, with an
-    // unobstructed exit path.
-    this.boatSpawn = new THREE.Vector3(5.5, 0, 21.5);
-    // Where the player stands to board — the dock's right edge beside the
-    // boat (the engine steps off at boardingPoint + (-1.2, 0, -1.2), which is
-    // safely on the deck).
-    this.boardingPoint = new THREE.Vector3(2.5, 1.2, 21.5);
+    // side of the square concrete end platform, facing +z out the harbour
+    // mouth (the engine sets rotation.y = π so the bow points +z). Clear of
+    // the platform, seabed, deck and player, with an unobstructed exit path.
+    this.boatSpawn = new THREE.Vector3(5.75, 0, 31);
+    // Where the player stands to board — the platform's right edge beside
+    // the boat (the engine steps off at boardingPoint + (-1.2, 0, -1.2),
+    // which is safely on the platform).
+    this.boardingPoint = new THREE.Vector3(4.35, 1.2, 31);
     this.dockEnd = null;
 
     // Shared materials — ONE set reused by every harbour part (Part 1 + 2)
@@ -187,11 +183,11 @@ export class HarbourManager {
     // ── Invisible edge walls (character collision only) ──────────────────
     // Back / left / right platform edges stay. The front (water-facing) edge
     // has gaps where the central pier (x -2..2) and the two U arms connect
-    // (left arm x -25..-10, right arm x 19..25), so the player can walk onto
-    // all of them from the platform — but nowhere else into the water.
+    // (left arm x -25..-17, right arm x 17..25), so the player can walk onto
+    // all of them from the platform — but nowhere else into the channel.
     this._invisibleWall(0, -40, 50, 0.2);       // back edge (z -40..-39.8)
-    this._invisibleWall(-6, 0.1, 8, 0.2);       // front edge, left arm → pier (x -10..-2)
-    this._invisibleWall(6, 0.1, 8, 0.2);        // front edge, pier → right arm (x 2..10)
+    this._invisibleWall(-9.5, 0.1, 15, 0.2);    // front edge, left arm → pier (x -17..-2)
+    this._invisibleWall(9.5, 0.1, 15, 0.2);     // front edge, pier → right arm (x 2..17)
     this._invisibleWall(-25, -20, 0.2, 40);     // left edge (z -40..0)
     this._invisibleWall(25, -20, 0.2, 40);      // right edge (z -40..0)
 
@@ -215,19 +211,20 @@ export class HarbourManager {
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  //  PART 1 — Central pier + docking platform (wooden, top at y = 1.2)
+  //  PART 1 — Central wooden pier + square concrete end platform
   // ────────────────────────────────────────────────────────────────────────
 
   _buildCentralPier() {
     // Materials come from the shared set (this._mat) — see constructor.
 
-    // ── Central pier: 4 m wide × 20 m long, z 0..20, top at y = 1.2 ──────
-    // Runs +z from the platform's front edge toward the dock; the top matches
-    // the platform so the walk from the entrance is one seamless level. The
-    // 20 m length gives the player a meaningful walk into the harbour.
-    const deckGeo = new THREE.BoxGeometry(4, 0.4, 20);
+    // ── Central pier: 5.5 m wide × 27 m long, z 0..27, top at y = 1.2 ────
+    // Starts at the middle of the rear base's front edge (x = 0), exactly
+    // centered between the two U arms, and runs straight +z through the open
+    // channel to the harbour mouth. The wooden deck connects flush into the
+    // square concrete end platform at z = 27.
+    const deckGeo = new THREE.BoxGeometry(5.5, 0.4, 27);
     const deck = new THREE.Mesh(deckGeo, this._mat.deck);
-    deck.position.set(0, 1.0, 10);
+    deck.position.set(0, 1.0, 13.5);
     deck.castShadow = true;
     deck.receiveShadow = true;
     this.root.add(deck);
@@ -235,54 +232,54 @@ export class HarbourManager {
     // Below-deck solid fill (invisible): the boat's collision probe sits at
     // y = 0.3, below the deck's underside — this box spans y 0..0.8 so the
     // boat bumps the pier instead of sailing under it.
-    this._invisibleFill(4, 0.8, 20, 0, 0.4, 10);
+    this._invisibleFill(5.5, 0.8, 27, 0, 0.4, 13.5);
 
     // Plank seams across the deck — visual only, so no per-plank colliders.
-    const seamGeo = new THREE.BoxGeometry(0.08, 0.06, 20);
-    for (const x of [-0.8, 0, 0.8]) {
+    // Kept short of the end platform so no seam pokes above its surface.
+    const seamGeo = new THREE.BoxGeometry(0.08, 0.06, 26);
+    for (const x of [-1.8, -0.9, 0, 0.9, 1.8]) {
       const seam = new THREE.Mesh(seamGeo, this._mat.plank);
-      seam.position.set(x, 1.23, 10);
+      seam.position.set(x, 1.23, 13);
       this.root.add(seam);
     }
 
-    // ── Central docking platform (T-head): 5 m × 3 m, z 20..23 ───────────
-    // The boarding platform at the pier's far end; the boat docks to its
-    // right (+x) side.
-    const dockGeo = new THREE.BoxGeometry(5, 0.4, 3);
-    const dock = new THREE.Mesh(dockGeo, this._mat.deck);
-    dock.position.set(0, 1.0, 21.5);
-    dock.castShadow = true;
-    dock.receiveShadow = true;
-    this.root.add(dock);
-    this.colliders.push(dock);
-    // Same below-deck fill for the dock head (y 0..0.8).
-    this._invisibleFill(5, 0.8, 3, 0, 0.4, 21.5);
+    // ── Square concrete end platform: 8 m × 8 m × 1.2 m, z 27..35 ────────
+    // The docking/standing head at the pier's far end, centered on X = 0 and
+    // sitting in the open water at the harbour mouth. Same concrete, 1.2 m
+    // thickness and 1.2 m top height as the rear base — the wooden pier
+    // connects flush into its rear face, its top exactly level with the
+    // platform (no gap, no floating geometry). The platform overhangs the
+    // 5.5 m pier by 1.25 m on each side and is surrounded by water except
+    // where the pier connects behind it — it never touches the U arms.
+    const headGeo = new THREE.BoxGeometry(8, 1.2, 8);
+    const head = new THREE.Mesh(headGeo, this._mat.concrete);
+    head.position.set(0, 0.6, 31);
+    head.castShadow = true;
+    head.receiveShadow = true;
+    this.root.add(head);
+    this.colliders.push(head); // walkable ground + stops the boat at its face
 
-    const dockSeamGeo = new THREE.BoxGeometry(5, 0.06, 0.08);
-    for (const z of [20.6, 21.5, 22.4]) {
-      const seam = new THREE.Mesh(dockSeamGeo, this._mat.plank);
-      seam.position.set(0, 1.23, z);
-      this.root.add(seam);
-    }
-
-    // ── Wooden pilings under pier + dock (visual only — the deck slabs
+    // ── Wooden pilings under the pier (visual only — the deck slab + fill
     //    already block the boat, so the pilings never need collision). ──
     const pilingGeo = this._geo.piling; // shared geometry (Part 5)
-    const pilings = [[-1.6, 2.5], [1.6, 2.5], [-1.6, 7.5], [1.6, 7.5],
-                     [-1.6, 12.5], [1.6, 12.5], [-1.6, 17.5], [1.6, 17.5],
-                     [-1.9, 20.6], [1.9, 20.6], [-1.9, 22.4], [1.9, 22.4]];
+    const pilings = [[-2.2, 2.5], [2.2, 2.5], [-2.2, 7.5], [2.2, 7.5],
+                     [-2.2, 12.5], [2.2, 12.5], [-2.2, 17.5], [2.2, 17.5],
+                     [-2.2, 22.5], [2.2, 22.5]];
     for (const [x, z] of pilings) {
       const p = new THREE.Mesh(pilingGeo, this._mat.piling);
       p.position.set(x, 0.425, z); // rises from the waterline to the deck
       this.root.add(p);
     }
 
-    // ── Character boundary walls: walk the deck, never off it ────────────
-    this._invisibleWall(-2.1, 10, 0.2, 20);    // pier left edge (z 0..20)
-    this._invisibleWall(2.1, 10, 0.2, 20);     // pier right edge (z 0..20)
-    this._invisibleWall(-2.6, 21.5, 0.2, 3);   // dock left edge (z 20..23)
-    this._invisibleWall(2.6, 21.5, 0.2, 3);    // dock right edge (z 20..23)
-    this._invisibleWall(0, 23.1, 5.2, 0.2);    // dock end (faces the channel)
+    // ── Character boundary walls: walk the deck + platform, never off them ─
+    this._invisibleWall(-2.85, 13.5, 0.2, 27);   // pier left edge (z 0..27)
+    this._invisibleWall(2.85, 13.5, 0.2, 27);    // pier right edge (z 0..27)
+    this._invisibleWall(-4.05, 31, 0.2, 8);      // platform left edge (z 27..35)
+    this._invisibleWall(4.05, 31, 0.2, 8);       // platform right edge (z 27..35)
+    this._invisibleWall(0, 35.1, 8, 0.2);        // platform front edge (faces ocean)
+    // Platform rear corners beside the pier connection (x ±2.75..4 at z 27).
+    this._invisibleWall(-3.375, 27.1, 1.25, 0.2);
+    this._invisibleWall(3.375, 27.1, 1.25, 0.2);
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -311,112 +308,53 @@ export class HarbourManager {
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  //  PART 2 — Left wing: the U's left arm (walkway + dock edge + crane)
+  //  PART 2 — Left arm: the U's left side (concrete slab + dock edge + crane)
   // ────────────────────────────────────────────────────────────────────────
 
   _buildLeftWing() {
     const m = this._mat;
     const g = this._geo;
 
-    // ── Walkway: concrete deck, x -25..-10 (15 m wide), z 0..40, top y=1.2 ──
-    // Flush with the platform's left edge (x = -25) and running +z toward the
-    // ocean — the U's LONG left arm (40 m), bounding the central channel on
-    // its -x side for its full length. Its inner face (x = -10) is the dock
-    // edge; the central channel stays fully open beyond it.
-    const deckGeo = new THREE.BoxGeometry(15, 0.5, 40);
-    const deck = new THREE.Mesh(deckGeo, m.stone);
-    deck.position.set(-17.5, 0.95, 20);
-    deck.castShadow = true;
-    deck.receiveShadow = true;
-    this.root.add(deck);
-    this.colliders.push(deck); // walkable ground
-    // Below-deck solid fill (invisible): stops the boat at the wing's face
-    // instead of letting it sail under the deck (y 0..0.7).
-    this._invisibleFill(15, 0.7, 40, -17.5, 0.35, 20);
+    // ── Arm: concrete slab, x -25..-17 (8 m wide), z 0..27, top y = 1.2 ────
+    // The U's LEFT arm: flush with the rear base's left edge (x = -25) and
+    // extending forward (+z) toward the ocean. Same concrete material and
+    // 1.2 m thickness as the rear base, so the connection is seamless and the
+    // top surfaces stay flat and level. The inner face (x = -17) is the
+    // future docking edge; the open channel lies beyond it.
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 27), m.concrete);
+    slab.position.set(-21, 0.6, 13.5);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    this.root.add(slab);
+    this.colliders.push(slab); // walkable ground + stops the boat at the face
 
-    // Wooden pilings under the walkway (visual — the slab already blocks).
-    const pilingGeo = g.piling; // shared geometry (Part 5)
-    const pilings = [[-22, 5], [-22, 15], [-22, 25], [-22, 35],
-                     [-11.5, 5], [-11.5, 15], [-11.5, 25], [-11.5, 35]];
-    for (const [x, z] of pilings) {
-      const p = new THREE.Mesh(pilingGeo, m.piling);
-      p.position.set(x, 0.425, z);
-      this.root.add(p);
-    }
-
-    // Dock edge: dark fender strip along the inner (boat-side) face.
-    const fender = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 40), m.metal);
-    fender.position.set(-9.94, 0.95, 20);
+    // Dock edge: dark fender strip along the inner (boat-side) face (x = -17).
+    const fender = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 27), m.metal);
+    fender.position.set(-16.94, 0.95, 13.5);
     this.root.add(fender);
 
     // Mooring bollards along the dock edge (solid — the player walks around).
     const bollardGeo = g.bollard; // shared geometry (Part 5)
-    for (const z of [3, 12, 21, 30, 38]) {
+    for (const z of [4, 10, 16, 22]) {
       const b = new THREE.Mesh(bollardGeo, m.bollard);
-      b.position.set(-10.4, 1.475, z);
+      b.position.set(-17.4, 1.475, z);
       b.castShadow = true;
       this.root.add(b);
       this.wallColliders.push(b);
     }
 
-    // ── Medium harbour crane (decorative — no crane interaction system) ──
-    // Tower on the REAR LAND at the rear-left (x -20, z -33), flanking the
-    // main building (Part 4 correction: CRANE · BUILDING · CRANE). The jib
-    // reaches inward (+x) toward the building. Low-poly, shared materials.
-    const CX = -20, CZ = -33;
-    const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.0, 2.2), m.stone);
-    base.position.set(CX, 1.7, CZ);
-    base.castShadow = true;
-    this.root.add(base);
-    this.wallColliders.push(base);
-
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(0.9, 5.5, 0.9), m.crane);
-    tower.position.set(CX, 4.55, CZ);
-    tower.castShadow = true;
-    this.root.add(tower);
-    this.wallColliders.push(tower); // keep the player off the column
-
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 1.2), m.metal);
-    cabin.position.set(CX, 7.65, CZ);
-    this.root.add(cabin);
-
-    const jib = new THREE.Mesh(new THREE.BoxGeometry(11, 0.5, 0.35), m.crane);
-    jib.position.set(CX + 5.5, 6.85, CZ); // spans CX..CX+11 (over the water)
-    jib.castShadow = true;
-    this.root.add(jib);
-
-    const counterJib = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.5, 0.35), m.crane);
-    counterJib.position.set(CX - 1.25, 6.85, CZ);
-    this.root.add(counterJib);
-
-    const weight = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.2, 1.4), m.metal);
-    weight.position.set(CX - 2.0, 6.0, CZ);
-    this.root.add(weight);
-
-    // Diagonal strut from the base up to the jib's mid-point (underslung).
-    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6.37, 6), m.metal);
-    strut.position.set(CX + 3.2, 4.4, CZ);
-    strut.rotation.z = -0.81;
-    this.root.add(strut);
-
-    // Trolley + cable + hook at the jib tip, dangling over the dock-edge water.
-    const trolley = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.5), m.metal);
-    trolley.position.set(CX + 10.4, 6.55, CZ);
-    this.root.add(trolley);
-    // The hook hangs high (y = 2.6) so it clears the player's head now that
-    // the crane stands on the walkable rear land (was dangling to 1.35 when
-    // it hung over the water).
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 4.0, 4), m.metal);
-    cable.position.set(CX + 10.4, 4.55, CZ);
-    this.root.add(cable);
-    const hook = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 6, 10), m.metal);
-    hook.position.set(CX + 10.4, 2.6, CZ);
-    this.root.add(hook);
+    // ── Harbour crane — the shared crane.glb asset (left rear side) ──────
+    // Replaces the old procedural placeholder: the exact landAsset model,
+    // placed near the outer left of the rear area, its boom rotated to reach
+    // inward (+x, +z) toward the central water / docking area. Scale 0.38 ≈
+    // 17.6 m tall — properly proportioned so human character matches stairs & cabin.
+    this._placeCrane(-21.5, -33, -2.705, 0.38); // rotation.y ≈ -155°
 
     // ── Small believable props near the edges (shared geoms/materials) ──
-    // Crates (solid).
+    // Crates (solid) — on the arm surface (x -25..-17); the old inner-edge
+    // props would sit in the open channel now.
     const crateGeo = g.crate; // shared geometry (Part 5)
-    const crates = [[-13, 1.6, 1.2, 0], [-15, 1.6, 0.8, 0.4], [-14, 2.4, 1.8, 0]];
+    const crates = [[-19, 1.6, 1.2, 0], [-20, 1.6, 0.8, 0.4], [-18.6, 2.4, 1.8, 0]];
     for (const [x, y, z, r] of crates) {
       const c = new THREE.Mesh(crateGeo, m.deck);
       c.position.set(x, y, z);
@@ -428,7 +366,7 @@ export class HarbourManager {
 
     // Barrels (solid) — two standing, one lying on its side.
     const barrelGeo = g.barrel; // shared geometry (Part 5)
-    const barrels = [[-16.5, 1.675, 1.5, 0], [-16.5, 1.675, 3.2, 0], [-17.5, 1.54, 2, Math.PI / 2]];
+    const barrels = [[-22, 1.675, 1.5, 0], [-22, 1.675, 3.2, 0], [-23, 1.54, 2, Math.PI / 2]];
     for (const [x, y, z, r] of barrels) {
       const b = new THREE.Mesh(barrelGeo, m.barrel);
       b.position.set(x, y, z);
@@ -440,7 +378,7 @@ export class HarbourManager {
 
     // Small containers (solid).
     const containerGeo = g.container; // shared geometry (Part 5)
-    const containers = [[-12, 1.425, 2.2, 0], [-12.8, 1.425, 2.2, 0.3]];
+    const containers = [[-18.2, 1.425, 3.5, 0], [-19, 1.425, 3.8, 0.3]];
     for (const [x, y, z, r] of containers) {
       const c = new THREE.Mesh(containerGeo, m.container);
       c.position.set(x, y, z);
@@ -452,17 +390,17 @@ export class HarbourManager {
 
     // Rope coils by the mooring bollards (visual only).
     const coilGeo = g.coil; // shared geometry (Part 5)
-    for (const z of [4.6, 5.6]) {
+    for (const z of [5.5, 6.5]) {
       const coil = new THREE.Mesh(coilGeo, m.rope);
       coil.rotation.x = Math.PI / 2; // flat on the deck
-      coil.position.set(-10.8, 1.245, z);
+      coil.position.set(-18.3, 1.245, z);
       this.root.add(coil);
     }
 
     // Life ring (visual only).
     const ring = new THREE.Mesh(g.ring, m.ring);
     ring.rotation.x = Math.PI / 2;
-    ring.position.set(-10.9, 1.275, 12.6);
+    ring.position.set(-18.4, 1.275, 12.6);
     this.root.add(ring);
 
     // Rolled fishing net along the outer area (visual only).
@@ -471,36 +409,36 @@ export class HarbourManager {
     net.position.set(-18.5, 1.48, 1.5);
     this.root.add(net);
 
-    // ── Safety railing: outer edge (x = -25) + far end (z = 16) ──────────
+    // ── Safety railing: outer edge (x = -25) + far end (z = 27) ──────────
     // Visual only — the invisible walls below handle the actual collision.
     const postGeo = new THREE.BoxGeometry(0.08, 1.0, 0.08);
-    const railOuterGeo = new THREE.BoxGeometry(0.05, 0.06, 40);
-    const railEndGeo = new THREE.BoxGeometry(15, 0.06, 0.05);
-    for (const z of [0.5, 5.5, 10.5, 15.5, 20.5, 25.5, 30.5, 35.5, 39.5]) {
+    const railOuterGeo = new THREE.BoxGeometry(0.05, 0.06, 27);
+    const railEndGeo = new THREE.BoxGeometry(8, 0.06, 0.05);
+    for (const z of [0.5, 5.5, 10.5, 15.5, 20.5, 25.5]) {
       const post = new THREE.Mesh(postGeo, m.metal);
       post.position.set(-24.92, 1.7, z);
       this.root.add(post);
     }
     for (const y of [1.5, 1.9]) {
       const rail = new THREE.Mesh(railOuterGeo, m.metal);
-      rail.position.set(-24.92, y, 20);
+      rail.position.set(-24.92, y, 13.5);
       this.root.add(rail);
     }
-    for (const x of [-24.9, -21.5, -18.5, -15.5, -12.5, -10.1]) {
+    for (const x of [-24.9, -22.5, -20.5, -18.5, -17.1]) {
       const post = new THREE.Mesh(postGeo, m.metal);
-      post.position.set(x, 1.7, 39.92);
+      post.position.set(x, 1.7, 26.92);
       this.root.add(post);
     }
     for (const y of [1.5, 1.9]) {
       const rail = new THREE.Mesh(railEndGeo, m.metal);
-      rail.position.set(-17.5, y, 39.92);
+      rail.position.set(-21, y, 26.92);
       this.root.add(rail);
     }
 
-    // ── Character boundary walls: walk the wing, never off it ────────────
-    this._invisibleWall(-24.9, 20, 0.2, 40);     // outer edge (x -25..-24.8)
-    this._invisibleWall(-9.9, 20, 0.2, 40);      // inner dock edge (channel side)
-    this._invisibleWall(-17.5, 40.1, 15, 0.2);   // far end (z 40..40.2)
+    // ── Character boundary walls: walk the arm, never off it ─────────────
+    this._invisibleWall(-24.9, 13.5, 0.2, 27);   // outer edge (x -25..-24.8)
+    this._invisibleWall(-17.1, 13.5, 0.2, 27);   // inner dock edge (channel side)
+    this._invisibleWall(-21, 27.1, 8, 0.2);      // far end (z 27..27.2)
 
     // ── Small palm cluster at the wing's outer/rear corner (visual only) ──
     const palms = [[-23, -1.2, 3.0, 1.2], [-21.6, -3.0, 2.6, 1.2], [-24.2, -3.4, 2.4, 1.2]];
@@ -510,114 +448,54 @@ export class HarbourManager {
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  //  PART 3 — Right wing: the U's right arm (long dock wall)
+  //  PART 3 — Right arm: the U's right side (concrete slab + dock edge + crane)
   // ────────────────────────────────────────────────────────────────────────
 
   _buildRightWing() {
     const m = this._mat;
     const g = this._geo;
 
-    // ── Walkway: concrete deck, x 10..25 (15 m wide), z 0..40, top y=1.2 ──
-    // EXACT MIRROR of the left wing around X = 0 (RightX = -LeftX): same
-    // 15 m width, same 40 m length, same 1.2 m top height, flush with the
-    // platform's right edge (x = 25). Inner edge at x = +10 matches the
-    // left's -10, so the channel is 20 m wide and centered on X = 0.
-    const deckGeo = new THREE.BoxGeometry(15, 0.5, 40);
-    const deck = new THREE.Mesh(deckGeo, m.stone);
-    deck.position.set(17.5, 0.95, 20);
-    deck.castShadow = true;
-    deck.receiveShadow = true;
-    this.root.add(deck);
-    this.colliders.push(deck); // walkable ground
-    // Below-deck solid fill (invisible): stops the boat at the wing's face.
-    this._invisibleFill(15, 0.7, 40, 17.5, 0.35, 20);
+    // ── Arm: concrete slab, x 17..25 (8 m wide), z 0..27, top y = 1.2 ─────
+    // EXACT MIRROR of the left arm around X = 0 (RightX = -LeftX): same 8 m
+    // width, same 27 m length, same concrete + 1.2 m thickness, flush with
+    // the rear base's right edge (x = 25). Inner edge at x = +17 matches the
+    // left's -17, so the open channel between the arms is perfectly centered
+    // on X = 0.
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 27), m.concrete);
+    slab.position.set(21, 0.6, 13.5);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    this.root.add(slab);
+    this.colliders.push(slab); // walkable ground + stops the boat at the face
 
-    // Wooden pilings under the walkway (visual) — mirrored from the left.
-    const pilingGeo = g.piling; // shared geometry (Part 5)
-    const pilings = [[22, 5], [11.5, 5], [22, 15], [11.5, 15],
-                     [22, 25], [11.5, 25], [22, 35], [11.5, 35]];
-    for (const [x, z] of pilings) {
-      const p = new THREE.Mesh(pilingGeo, m.piling);
-      p.position.set(x, 0.425, z);
-      this.root.add(p);
-    }
-
-    // Dock edge: dark fender strip along the inner (boat-side) face.
-    const fender = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 40), m.metal);
-    fender.position.set(9.94, 0.95, 20);
+    // Dock edge: dark fender strip along the inner (boat-side) face (x = 17).
+    const fender = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 27), m.metal);
+    fender.position.set(16.94, 0.95, 13.5);
     this.root.add(fender);
 
     // Mooring bollards along the dock edge (solid — walk around them).
     const bollardGeo = g.bollard; // shared geometry (Part 5)
-    for (const z of [3, 12, 21, 30, 38]) {
+    for (const z of [4, 10, 16, 22]) {
       const b = new THREE.Mesh(bollardGeo, m.bollard);
-      b.position.set(10.4, 1.475, z);
+      b.position.set(17.4, 1.475, z);
       b.castShadow = true;
       this.root.add(b);
       this.wallColliders.push(b);
     }
 
-    // ── Medium harbour crane (decorative) — MIRRORED from the left ───────
-    // Same scale / height; on the REAR LAND at the rear-right (x 20, z -33),
-    // mirroring the left crane and flanking the main building. The jib
-    // points inward (-x) toward the building.
-    const CX = 20, CZ = -33;
-    const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.0, 2.2), m.stone);
-    base.position.set(CX, 1.7, CZ);
-    base.castShadow = true;
-    this.root.add(base);
-    this.wallColliders.push(base);
-
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(0.9, 5.5, 0.9), m.crane);
-    tower.position.set(CX, 4.55, CZ);
-    tower.castShadow = true;
-    this.root.add(tower);
-    this.wallColliders.push(tower);
-
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 1.2), m.metal);
-    cabin.position.set(CX, 7.65, CZ);
-    this.root.add(cabin);
-
-    const jib = new THREE.Mesh(new THREE.BoxGeometry(11, 0.5, 0.35), m.crane);
-    jib.position.set(CX - 5.5, 6.85, CZ); // spans CX..CX-11 (inward over water)
-    jib.castShadow = true;
-    this.root.add(jib);
-
-    const counterJib = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.5, 0.35), m.crane);
-    counterJib.position.set(CX + 1.25, 6.85, CZ);
-    this.root.add(counterJib);
-
-    const weight = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.2, 1.4), m.metal);
-    weight.position.set(CX + 2.0, 6.0, CZ);
-    this.root.add(weight);
-
-    // Diagonal strut from the base up to the jib's mid-point (underslung).
-    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6.37, 6), m.metal);
-    strut.position.set(CX - 3.2, 4.4, CZ);
-    strut.rotation.z = 0.81;
-    this.root.add(strut);
-
-    // Trolley + cable + hook at the jib tip — mirrored from the left, over
-    // the water just off the dock edge (out of the boat's reach, exactly as
-    // on the left side).
-    const trolley = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.5), m.metal);
-    trolley.position.set(CX - 10.4, 6.55, CZ);
-    this.root.add(trolley);
-    // The hook hangs high (y = 2.6) so it clears the player's head now that
-    // the crane stands on the walkable rear land (was dangling to 1.35 when
-    // it hung over the water).
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 4.0, 4), m.metal);
-    cable.position.set(CX - 10.4, 4.55, CZ);
-    this.root.add(cable);
-    const hook = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 6, 10), m.metal);
-    hook.position.set(CX - 10.4, 2.6, CZ);
-    this.root.add(hook);
+    // ── Harbour crane — the shared crane.glb asset (right rear side) ─────
+    // Replaces the old procedural placeholder: the exact landAsset model,
+    // placed near the outer right of the rear area, its boom rotated to reach
+    // inward (-x, +z) toward the central water / docking area. Same scale as
+    // the left crane (0.38 ≈ 17.6 m).
+    this._placeCrane(21.5, -33, 2.705, 0.38); // rotation.y ≈ +155°
 
     // ── Props — deliberately NOT the exact mirror of the left (Part 5: the
     //    arms keep the same structure but the decorative clusters differ) ──
-    // Crates (solid) — only two, at different spots than the left.
+    // Crates (solid) — only two, at different spots than the left; on the
+    // arm surface (x 17..25), clear of the open channel.
     const crateGeo = g.crate; // shared geometry (Part 5)
-    const crates = [[13, 1.6, 1.2, 0], [14.6, 2.4, 1.9, 0.3]];
+    const crates = [[19, 1.6, 1.2, 0], [18.6, 2.4, 1.9, 0.3]];
     for (const [x, y, z, r] of crates) {
       const c = new THREE.Mesh(crateGeo, m.deck);
       c.position.set(x, y, z);
@@ -630,7 +508,7 @@ export class HarbourManager {
     // Barrels (solid) — three standing in a row (the left has two + one
     // lying; this side stands all three).
     const barrelGeo = g.barrel; // shared geometry (Part 5)
-    const barrels = [[16.5, 1.675, 1.5, 0], [16.5, 1.675, 3.2, 0], [18, 1.675, 2.4, 0]];
+    const barrels = [[22, 1.675, 1.5, 0], [22, 1.675, 3.2, 0], [23.5, 1.675, 2.4, 0]];
     for (const [x, y, z, r] of barrels) {
       const b = new THREE.Mesh(barrelGeo, m.barrel);
       b.position.set(x, y, z);
@@ -642,7 +520,7 @@ export class HarbourManager {
 
     // Small containers (solid) — rotated differently than the left pair.
     const containerGeo = g.container; // shared geometry (Part 5)
-    const containers = [[12, 1.425, 2.2, 0.5], [13, 1.425, 2.6, 0]];
+    const containers = [[18.2, 1.425, 3.5, 0.5], [19.2, 1.425, 3.9, 0]];
     for (const [x, y, z, r] of containers) {
       const c = new THREE.Mesh(containerGeo, m.container);
       c.position.set(x, y, z);
@@ -654,17 +532,17 @@ export class HarbourManager {
 
     // Rope coils by the mooring bollards (visual only).
     const coilGeo = g.coil; // shared geometry (Part 5)
-    for (const z of [4.6, 5.6]) {
+    for (const z of [5.5, 6.5]) {
       const coil = new THREE.Mesh(coilGeo, m.rope);
       coil.rotation.x = Math.PI / 2;
-      coil.position.set(10.8, 1.245, z);
+      coil.position.set(18.3, 1.245, z);
       this.root.add(coil);
     }
 
     // Life ring (visual only) — hung nearer the dock head than the left's.
     const ring = new THREE.Mesh(g.ring, m.ring);
     ring.rotation.x = Math.PI / 2;
-    ring.position.set(10.9, 1.275, 8.5);
+    ring.position.set(18.4, 1.275, 9);
     this.root.add(ring);
 
     // Rolled fishing net (visual only) — further out along the deck.
@@ -673,36 +551,36 @@ export class HarbourManager {
     net.position.set(19.5, 1.48, 2.8);
     this.root.add(net);
 
-    // ── Safety railing: outer edge (x = 25) + far end (z = 40) ──────────
+    // ── Safety railing: outer edge (x = 25) + far end (z = 27) ──────────
     // Mirrored from the left; visual only — walls below do the collision.
     const postGeo = new THREE.BoxGeometry(0.08, 1.0, 0.08);
-    const railOuterGeo = new THREE.BoxGeometry(0.05, 0.06, 40);
-    const railEndGeo = new THREE.BoxGeometry(15, 0.06, 0.05);
-    for (const z of [0.5, 5.5, 10.5, 15.5, 20.5, 25.5, 30.5, 35.5, 39.5]) {
+    const railOuterGeo = new THREE.BoxGeometry(0.05, 0.06, 27);
+    const railEndGeo = new THREE.BoxGeometry(8, 0.06, 0.05);
+    for (const z of [0.5, 5.5, 10.5, 15.5, 20.5, 25.5]) {
       const post = new THREE.Mesh(postGeo, m.metal);
       post.position.set(24.92, 1.7, z);
       this.root.add(post);
     }
     for (const y of [1.5, 1.9]) {
       const rail = new THREE.Mesh(railOuterGeo, m.metal);
-      rail.position.set(24.92, y, 20);
+      rail.position.set(24.92, y, 13.5);
       this.root.add(rail);
     }
-    for (const x of [24.9, 21.5, 18.5, 15.5, 12.5, 10.1]) {
+    for (const x of [24.9, 22.5, 20.5, 18.5, 17.1]) {
       const post = new THREE.Mesh(postGeo, m.metal);
-      post.position.set(x, 1.7, 39.92);
+      post.position.set(x, 1.7, 26.92);
       this.root.add(post);
     }
     for (const y of [1.5, 1.9]) {
       const rail = new THREE.Mesh(railEndGeo, m.metal);
-      rail.position.set(17.5, y, 39.92);
+      rail.position.set(21, y, 26.92);
       this.root.add(rail);
     }
 
-    // ── Character boundary walls: walk the wing, never off it ────────────
-    this._invisibleWall(24.9, 20, 0.2, 40);   // outer edge (x 24.8..25)
-    this._invisibleWall(9.9, 20, 0.2, 40);    // inner dock edge (channel side)
-    this._invisibleWall(17.5, 40.1, 15, 0.2); // far end (z 40..40.2)
+    // ── Character boundary walls: walk the arm, never off it ─────────────
+    this._invisibleWall(24.9, 13.5, 0.2, 27);   // outer edge (x 24.8..25)
+    this._invisibleWall(17.1, 13.5, 0.2, 27);   // inner dock edge (channel side)
+    this._invisibleWall(21, 27.1, 8, 0.2);      // far end (z 27..27.2)
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -715,11 +593,11 @@ export class HarbourManager {
 
     // ── Detail clusters along the arms — CLUSTER · GAP · CLUSTER rhythm ──
     // The existing southern cluster near the platform end (z 0.8..12.6) is
-    // kept; two NEW clusters per arm (mid z ~18..22, far z ~30..34) sit
-    // mostly toward the OUTER edge, leaving the inner bollard line and the
-    // central channel clear. The right arm's clusters are composed
-    // differently from the left's — the structure is mirrored, decoration is
-    // not (Part 5).
+    // kept; mid (z ~18..22) and far (z ~24..27, inside the 27 m arms)
+    // clusters sit mostly toward the OUTER edge, leaving the inner bollard
+    // line and the central channel clear. The right arm's clusters are
+    // composed differently from the left's — the structure is mirrored,
+    // decoration is not (Part 5).
 
     // ── LEFT arm ─────────────────────────────────────────────────────────
     // Mid cluster: 2-stack of crates + lying barrel + rope coil (outer half).
@@ -741,25 +619,26 @@ export class HarbourManager {
     lCoil.position.set(-21.6, 1.245, 18.2);
     this.root.add(lCoil);
 
-    // Far cluster: container + standing barrel + rolled net + life ring.
+    // Far cluster: container + standing barrel + rolled net + life ring
+    // (pulled back inside the shorter 27 m arm).
     const lCont = new THREE.Mesh(g.container, m.container);
-    lCont.position.set(-19.6, 1.425, 31.5);
+    lCont.position.set(-19.6, 1.425, 25.5);
     lCont.rotation.y = 0.4;
     lCont.castShadow = true;
     this.root.add(lCont);
     this.wallColliders.push(lCont);
     const lBarrel2 = new THREE.Mesh(g.barrel, m.barrel);
-    lBarrel2.position.set(-21.8, 1.675, 33.8);
+    lBarrel2.position.set(-21.8, 1.675, 26.5);
     lBarrel2.castShadow = true;
     this.root.add(lBarrel2);
     this.wallColliders.push(lBarrel2);
     const lNet = new THREE.Mesh(g.net, m.net);
     lNet.rotation.z = Math.PI / 2;
-    lNet.position.set(-23.2, 1.48, 30.6);
+    lNet.position.set(-23.2, 1.48, 24.6);
     this.root.add(lNet);
     const lRing = new THREE.Mesh(g.ring, m.ring);
     lRing.rotation.x = Math.PI / 2;
-    lRing.position.set(-18.4, 1.275, 33.6);
+    lRing.position.set(-18.4, 1.275, 26.2);
     this.root.add(lRing);
 
     // ── RIGHT arm — similar but NOT identical clusters ───────────────────
@@ -778,17 +657,17 @@ export class HarbourManager {
     this.root.add(rNet);
 
     // Far cluster: 3-high crate stack + rope coil (the left has a container
-    // + barrel + net + ring here).
+    // + barrel + net + ring here) — pulled back inside the shorter arm.
     for (const y of [1.6, 2.4, 3.2]) {
       const c = new THREE.Mesh(g.crate, m.deck);
-      c.position.set(21.6, y, 31);
+      c.position.set(21.6, y, 25);
       c.castShadow = true;
       this.root.add(c);
       this.wallColliders.push(c);
     }
     const rCoil = new THREE.Mesh(g.coil, m.rope);
     rCoil.rotation.x = Math.PI / 2;
-    rCoil.position.set(19.9, 1.245, 33.4);
+    rCoil.position.set(19.9, 1.245, 26.5);
     this.root.add(rCoil);
 
     // ── Outer-perimeter rocks: grounded boulders along the wings' outer
@@ -804,16 +683,18 @@ export class HarbourManager {
         this._placeRock(ROCK, x, z + jitter(1.4), 1.5 + Math.random() * 0.6, { y: -1.3 + Math.random() * 0.15 });
       }
     }
-    // A few larger boulders framing the harbour mouth (outside the channel).
-    const mouth = [[-12.5, 42.5, 2.0], [12.5, 42.5, 2.0], [-15, 44.5, 1.7], [15, 44.5, 1.7], [-11, 44, 1.4], [11, 44, 1.4]];
+    // A few larger boulders framing the harbour mouth — OUTSIDE the channel
+    // (past the arm tips at x ±17), so the boat's entrance path stays clear.
+    const mouth = [[-19.5, 42.5, 2.0], [19.5, 42.5, 2.0], [-21.5, 44.5, 1.7], [21.5, 44.5, 1.7], [-19, 44, 1.4], [19, 44, 1.4]];
     for (const [x, z, s] of mouth) {
       this._placeRock(ROCK, x, z, s, { y: -1.25 });
     }
 
     // ── Water details (visual only — the boat never collides with these) ──
-    // Buoys: two marking the channel's mid-sides + two framing the harbour
-    // mouth, all at x ±9.5 — clear of the boat's berth (x 5.5) and exit line.
-    for (const [x, z] of [[-9.5, 30], [9.5, 30], [-9.5, 43], [9.5, 43]]) {
+    // Buoys: two flanking the channel's mid-sides + two framing the harbour
+    // mouth, all at x ±19.5 — OUTSIDE the arms' inner edges (±17), so they
+    // mark the channel without ever sitting inside the boat's route.
+    for (const [x, z] of [[-19.5, 28], [19.5, 28], [-19.5, 43], [19.5, 43]]) {
       const buoy = new THREE.Group();
       const body = new THREE.Mesh(g.buoy, m.ring);
       body.position.y = 0.26;
@@ -833,8 +714,8 @@ export class HarbourManager {
     // channel (beyond the harbour mouth and in the outer sea), so the open
     // water reads alive without ever cluttering the boat's route.
     const debris = [
-      [12.5, 44], [-13.5, 45.5], [16, 47.5], [-15, 48.5],
-      [11, 42.5], [-12, 43.8], [27.5, 8], [28.5, 20],
+      [19, 44], [-20, 45.5], [21, 47.5], [-20.5, 48.5],
+      [18.5, 42.5], [-19, 43.8], [27.5, 8], [28.5, 20],
       [27, 32], [-27.5, 12], [-28.5, 24], [-27, 34],
     ];
     for (const [x, z] of debris) {
@@ -914,11 +795,13 @@ export class HarbourManager {
       this._placePalm(x, z, 2.4 + Math.random() * 0.4, 1.2);
     }
 
-    // ── Perimeter palms at the wings' rear corners (existing, untouched) ──
-    // Never in the channel — purely decorative marks on the arms' tips.
+    // ── Perimeter palms at the arms' tips (moved from the old 40 m tips to
+    //    the new 27 m squared-off ends — the old spots now sit in open water
+    //    / the channel mouth). Never in the channel; keeps the tips' inner
+    //    faces clear for future docking.
     const palms = [
-      [-22.5, 38.6, 2.6, 1.2], [-13.5, 38.9, 2.2, 1.2],
-      [22.5, 38.6, 2.6, 1.2], [13.5, 38.9, 2.2, 1.2],
+      [-22.5, 25.5, 2.6, 1.2], [-17.8, 25.6, 2.2, 1.2],
+      [22.5, 25.5, 2.6, 1.2], [17.8, 25.6, 2.2, 1.2],
     ];
     for (const [x, z, s, y] of palms) {
       this._placePalm(x, z, s, y);
@@ -1110,6 +993,37 @@ export class HarbourManager {
       });
       this.root.add(palm);
     }).catch(() => { /* asset missing — skip gracefully */ });
+  }
+
+  /** Place one of the two harbour cranes — the shared 'landAsset/Crane.glb'
+   * model, cloned so both cranes are identical (the old procedural
+   * placeholders are gone; this asset is the single source of truth). The
+   * model's native ground plane sits at y ≈ -0.07, so each clone is lifted
+   * so its base rests exactly on the platform surface (top y = 1.2) — never
+   * floating, sinking or intersecting the concrete. rotationY aims the boom
+   * (the model's -z axis) toward the central water / docking area. An
+   * invisible base wall keeps the player out of the tower footprint. */
+  _placeCrane(x, z, rotationY, scale) {
+    AssetManager.loadGLTF('landAsset/Crane.glb').then(gltf => {
+      const crane = gltf.scene.clone();
+      crane.scale.setScalar(scale);
+      crane.rotation.y = rotationY;
+      crane.position.set(x, 1.2 + 0.07 * scale, z); // base sits on y = 1.2
+      crane.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      this.root.add(crane);
+    }).catch(err => {
+      // No procedural fallback — the GLB is the required crane model.
+      console.error('Harbour crane asset failed to load (landAsset/Crane.glb):', err);
+    });
+    // Keep the player out of the crane's base footprint — sized with the
+    // model (native base AABB ≈ 16 × 15 m) so it tracks the scale.
+    const baseSize = 16.2 * scale;
+    this._invisibleWall(x, z, baseSize, baseSize);
   }
 
   _invisibleWall(x, z, xLen, zLen) {
