@@ -15,6 +15,12 @@ export class VegetationSystem {
     // modelPath -> { mesh, geo, mat, capacity }
     this._models = new Map();
 
+    // modelPath -> true for assets that failed to load once. Missing/broken
+    // assets are never retried — previously every chunk streaming the same
+    // missing model re-fetched it, spamming identical console errors (one per
+    // chunk) and wasting network + GC churn on a guaranteed rejection.
+    this._failed = new Set();
+
     // modelPath -> Map<chunkKey, Matrix4[]>
     this._chunkData = new Map();
 
@@ -24,24 +30,37 @@ export class VegetationSystem {
     this._dirty = new Set();
 
     this._dummy = new THREE.Object3D();
+
+    // Scratch objects for the per-rebuild bounding-sphere pass (reused, so
+    // rebuilds allocate nothing).
+    this._bbox = new THREE.Box3();
+    this._bsphere = new THREE.Sphere();
+    this._bscratch = new THREE.Vector3();
   }
 
   /**
    * Pre-load a model so it's ready for instancing.
    */
   async prepareModel(path) {
-    if (this._models.has(path)) return;
+    if (this._models.has(path) || this._failed.has(path)) return;
 
-    const gltf = await AssetManager.loadGLTF(path);
     let sourceMesh = null;
+    try {
+      const gltf = await AssetManager.loadGLTF(path);
+      gltf.scene.traverse(child => {
+        if (child.isMesh && !sourceMesh) {
+          sourceMesh = child;
+        }
+      });
+    } catch (_) {
+      this._failed.add(path); // asset missing/unreadable — never retried
+      return;
+    }
 
-    gltf.scene.traverse(child => {
-      if (child.isMesh && !sourceMesh) {
-        sourceMesh = child;
-      }
-    });
-
-    if (!sourceMesh) return;
+    if (!sourceMesh) {
+      this._failed.add(path); // no usable mesh in the file — never retried
+      return;
+    }
 
     this._models.set(path, {
       mesh: null,
@@ -65,11 +84,13 @@ export class VegetationSystem {
   async addChunkVegetation(chunkKey, path, placements, isStillActive = null) {
     if (placements.length === 0) return;
 
-    // Ensure model is loaded
+    // Ensure model is loaded (known-failed assets are skipped instantly)
+    if (this._failed.has(path)) return;
     if (!this._models.has(path)) {
       await this.prepareModel(path);
       if (isStillActive && !isStillActive()) return; // chunk gone while loading
     }
+    if (!this._models.has(path)) return; // failed while loading — nothing to place
 
     // Convert placements to Matrix4 array immediately
     const matrices = placements.map(p => {
@@ -136,7 +157,7 @@ export class VegetationSystem {
       const mesh = new THREE.InstancedMesh(model.geo, model.mat, newCapacity);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.frustumCulled = true; // enabled after computeBoundingSphere() below
+      mesh.frustumCulled = true; // culling sphere is computed below
 
       this.scene.add(mesh);
       model.mesh = mesh;
@@ -155,10 +176,28 @@ export class VegetationSystem {
     model.mesh.count = totalInstances;
     model.mesh.instanceMatrix.needsUpdate = true;
 
-    // Recompute the bounding sphere from the instance matrices so the mesh is
-    // correctly frustum-culled (skipped entirely when every instance is off
-    // screen) instead of being forced to draw every frame.
-    model.mesh.computeBoundingSphere();
+    // Recompute the bounding sphere so frustum culling works for the
+    // spread-out instances. three r134 has NO InstancedMesh.computeBoundingSphere()
+    // (it was added in r157+ — the old call threw and killed the render loop
+    // whenever a vegetated chunk streamed in), so compute the world-space
+    // sphere manually from the instance matrices. The InstancedMesh sits at
+    // the scene root (identity matrixWorld) and this geometry is exclusive to
+    // it, so writing the sphere onto the geometry is exactly what
+    // Frustum.intersectsObject() reads.
+    const box = this._bbox.makeEmpty();
+    for (const matrices of chunkMap.values()) {
+      for (const m of matrices) {
+        box.expandByPoint(this._bscratch.setFromMatrixPosition(m));
+      }
+    }
+    if (!box.isEmpty()) {
+      model.geo.computeBoundingSphere?.();
+      const sphere = box.getBoundingSphere(this._bsphere);
+      // Pad by the base geometry radius × a generous scale factor so scaled
+      // instances at the edge stay visible (max placement scale ≈ 2.6).
+      sphere.radius += (model.geo.boundingSphere?.radius ?? 1) * 3;
+      model.geo.boundingSphere.copy(sphere);
+    }
   }
 
   dispose() {

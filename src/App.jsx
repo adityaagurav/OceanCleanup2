@@ -4,12 +4,12 @@ import Settings      from './ui/Settings';
 import HowToPlay     from './ui/HowToPlay';
 import Credits       from './ui/Credits';
 import HUD           from './ui/HUD';
-import MissionSummary from './ui/MissionSummary';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { Engine }    from './engine/Engine.js';
 import { soundFx }   from './audio/AudioManager';
 import { PerformanceConfig } from './config/PerformanceConfig.js';
-import { MissionConfig }     from './config/MissionConfig.js';
+import { ProgressionConfig } from './config/ProgressionConfig.js';
+import { WeeklyQuestsClass } from './config/WeeklyQuests.js';
 
 // Screen-transition timing (ms) — shared by the navigate() timers and the
 // overlay's inline transition so they can never drift apart.
@@ -46,19 +46,32 @@ function App() {
   const navTimerRef = useRef(null);
 
   // ── In-game state ─────────────────────────────────────────────
-  const [score,        setScore]        = useState(0);
-  const [trashCount,   setTrashCount]   = useState(0);
+  // Progression state is ONE object shaped by ProgressionConfig.createSessionState()
+  // (boatTrashCount / deliveredTrashCount / coins / weeklyQuest) — the old
+  // mission/score state was removed with the mission system.
+  const [progression,  setProgression]  = useState(ProgressionConfig.createSessionState);
   const [boatSpeed,    setBoatSpeed]    = useState(0);
   const [pickupToast,  setPickupToast]  = useState(false);
-  const [completeToast,setCompleteToast]= useState(false);
   const [nearTrash,    setNearTrash]    = useState(false);
   const [isPaused,     setIsPaused]     = useState(false);
-  const [missionState, setMissionState] = useState('harbour');
-  const [hasStartedMission, setHasStartedMission] = useState(false);
-  const [missionComplete, setMissionComplete] = useState(false);
-  const [summaryShown, setSummaryShown] = useState(false);
+  const [gameMode,     setGameMode]     = useState('harbor'); // 'harbor' | 'boat'
   const [isNearBoat,   setIsNearBoat]   = useState(false);
   const [isDocked,     setIsDocked]     = useState(false);
+  const [nearUnloadZone, setNearUnloadZone] = useState(false); // boat in the recycling zone
+  const [isUnloading, setIsUnloading]     = useState(false);   // unload animation in flight
+  // Coin reward popup: { amount, key } — rendered by the HUD near the counter.
+  const [coinPopup, setCoinPopup] = useState(null);
+  const coinPopupTimerRef = useRef(null);
+
+  // ── Weekly quests (Part 4) ─────────────────────────────────────
+  // Central quest authority; the UI renders plain snapshots. Progress is
+  // applied ONLY from gameplay events below — zero per-frame cost.
+  const [questSystem] = useState(() => new WeeklyQuestsClass());
+  const [weeklyQuests, setWeeklyQuests] = useState(() => null); // snapshot for the panel
+  const [questToast, setQuestToast] = useState(null); // { text, key } on claim
+  const questToastTimerRef = useRef(null);
+  const refreshQuests = () => setWeeklyQuests(questSystem.getSnapshot());
+  useEffect(() => { refreshQuests(); /* initial snapshot once mounted */ }, []);
   const [isNight,      setIsNight]      = useState(false);
   // Compass packet from the engine: camera heading + harbour bearing/dist.
   const [compass,      setCompass]      = useState({ heading: 0, harbour: 0, dist: 0 });
@@ -66,10 +79,6 @@ function App() {
   const containerRef   = useRef(null);
   const engineRef      = useRef(null);
   const toastTimerRef  = useRef(null);
-  const completeToastTimerRef = useRef(null);
-  const missionToastTimerRef = useRef(null);
-  const missionCompleteRef = useRef(false);
-  const summaryShownRef    = useRef(false);
   // Last speed string pushed to the HUD — skips React renders when the
   // displayed value hasn't changed (the engine reports speed every frame).
   const lastSpeedRef   = useRef('0.0');
@@ -105,34 +114,29 @@ function App() {
   useEffect(() => {
     if (scene !== 'GAME' || !containerRef.current) return;
 
-    setScore(0); setTrashCount(0); setBoatSpeed(0);
+    setProgression(ProgressionConfig.createSessionState());
+    setBoatSpeed(0);
     setIsPaused(false); setNearTrash(false);
     setIsNearBoat(false); setIsDocked(false);
-    setMissionState('harbour'); setHasStartedMission(false);
-    setMissionComplete(false); setSummaryShown(false);
+    setNearUnloadZone(false);
+    setIsUnloading(false);
+    setGameMode('harbor');
     setCompass({ heading: 0, harbour: 0, dist: 0 });
-    missionCompleteRef.current = false;
-    summaryShownRef.current = false;
 
     const engine = new Engine(
       containerRef.current,
       {
-        onCollect: (newScore, newCount) => {
-          setScore(newScore);
-          setTrashCount(newCount);
+        // onCollect(boatTrashCount, worldTrash): collection is tracked aboard
+        // only — no goal check, no completion, no reward (unload → coins come
+        // in Part 2/3; see ProgressionConfig.js).
+        onCollect: (boatTrashCount) => {
+          setProgression(p => ({ ...p, boatTrashCount }));
           soundFx.playCollectSound();
+          questSystem.addProgress('collect_trash', 1); // weekly quest progress
+          refreshQuests();
           setPickupToast(true);
           if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
           toastTimerRef.current = setTimeout(() => setPickupToast(false), 1200);
-
-          // Goal reached → mark the mission complete (once per session).
-          if (!missionCompleteRef.current && newCount >= MissionConfig.TRASH_GOAL) {
-            missionCompleteRef.current = true;
-            setMissionComplete(true);
-            setCompleteToast(true);
-            if (completeToastTimerRef.current) clearTimeout(completeToastTimerRef.current);
-            completeToastTimerRef.current = setTimeout(() => setCompleteToast(false), 3500);
-          }
         },
         onNearTrash: (isNear) => setNearTrash(isNear),
         // Perf: only re-render the HUD when the shown knots value changes
@@ -144,24 +148,41 @@ function App() {
           lastSpeedRef.current = display;
           setBoatSpeed(speed);
         },
-        onMissionState: (state) => {
-          setMissionState(state);
-          if (state === 'started') {
-            setHasStartedMission(true);
-            // Brief "mission started" toast — fade to the stable state.
-            if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
-            missionToastTimerRef.current = setTimeout(() => setMissionState('active'), 5000);
-          } else if (state === 'harbour') {
-            // Mission over (left the boat) — reveal the summary once the
-            // goal was reached. Shown at most once per session.
-            if (missionCompleteRef.current && !summaryShownRef.current) {
-              summaryShownRef.current = true;
-              setSummaryShown(true);
-            }
-          }
-        },
+        // Mode handoff only ('harbor' | 'boat') — replaces onMissionState.
+        onGameMode: setGameMode,
         onNearBoat: (isNear) => setIsNearBoat(isNear),
         onDockState: (docked) => setIsDocked(docked),
+        // Unload-zone proximity + interaction (Part 3).
+        onUnloadZone: (near) => setNearUnloadZone(near),
+        // Unload action lifecycle — the prompt hides while the animation runs.
+        onUnloadingChanged: (active) => setIsUnloading(active),
+        // Unload finished (animation done): trash out of inventory, coins in.
+        // The engine guarantees exactly one completion per unload action.
+        onUnloadComplete: (amount, reward) => {
+          // Consistency guard reads the LIVE state inside the functional update
+          // (the engine already guarantees amount ≤ inventory; this only keeps
+          // React math from ever going negative or paying on an empty haul).
+          setProgression(p => {
+            const moved = Math.max(0, Math.min(amount, p.boatTrashCount));
+            if (moved === 0) return p;
+            const coins = p.coins + reward;
+            ProgressionConfig.saveCoins(coins); // basic local persistence
+            return {
+              ...p,
+              boatTrashCount: p.boatTrashCount - moved,
+              deliveredTrashCount: p.deliveredTrashCount + moved,
+              coins,
+            };
+          });
+          // Weekly quest progress from the same event (no duplicate counting):
+          questSystem.addProgress('unload_trash', amount);
+          questSystem.addProgress('earn_coins', reward);
+          refreshQuests();
+          // Lightweight +X feedback near the coin counter (~1 s, subtle).
+          setCoinPopup({ amount: reward, key: Date.now() });
+          if (coinPopupTimerRef.current) clearTimeout(coinPopupTimerRef.current);
+          coinPopupTimerRef.current = setTimeout(() => setCoinPopup(null), 1100);
+        },
         // Day/night: HUD flips to the deep-navy glass variant at night.
         onNightChange: (night) => setIsNight(night),
         // Compass: throttled heading/harbour updates for the top-centre rose.
@@ -174,8 +195,8 @@ function App() {
     window.game = engine;
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-      if (completeToastTimerRef.current) clearTimeout(completeToastTimerRef.current);
-      if (missionToastTimerRef.current) clearTimeout(missionToastTimerRef.current);
+      if (coinPopupTimerRef.current) clearTimeout(coinPopupTimerRef.current);
+      if (questToastTimerRef.current) clearTimeout(questToastTimerRef.current);
       engine.destroy();
       engineRef.current = null;
       if (window.game === engine) window.game = null;
@@ -191,7 +212,22 @@ function App() {
     else          engineRef.current.resume();
   }, [isPaused]);
 
-  const inBoat = missionState !== 'harbour';
+  /** Claim a weekly quest reward (once) — coins join the normal balance. */
+  const handleClaimQuest = (id) => {
+    const reward = questSystem.claim(id);
+    if (reward == null) return; // not claimable / already claimed
+    setProgression(p => {
+      const coins = p.coins + reward;
+      ProgressionConfig.saveCoins(coins);
+      return { ...p, coins };
+    });
+    refreshQuests();
+    setQuestToast({ text: `+${reward} coins claimed`, key: Date.now() });
+    if (questToastTimerRef.current) clearTimeout(questToastTimerRef.current);
+    questToastTimerRef.current = setTimeout(() => setQuestToast(null), 2200);
+  };
+
+  const inBoat = gameMode === 'boat';
 
   // ──────────────────────────────────────────────────────────────
   return (
@@ -232,17 +268,20 @@ function App() {
           <DebugOverlay engineRef={engineRef} />
 
           <HUD
-            score={score}
-            trashCount={trashCount}
+            progression={progression}
             boatSpeed={boatSpeed}
             pickupToast={pickupToast}
-            completeToast={completeToast}
             nearTrash={nearTrash}
             isNearBoat={isNearBoat}
             isDocked={isDocked}
-            missionState={missionState}
-            missionComplete={missionComplete}
-            hasStartedMission={hasStartedMission}
+            nearUnloadZone={nearUnloadZone}
+            isUnloading={isUnloading}
+            coinPopup={coinPopup}
+            weeklyQuests={weeklyQuests}
+            hasClaimableQuests={questSystem.hasClaimable()}
+            onClaimQuest={handleClaimQuest}
+            questToast={questToast}
+            gameMode={gameMode}
             inBoat={inBoat}
             soundMuted={settings.soundMuted}
             onToggleSound={handleToggleSound}
@@ -275,14 +314,6 @@ function App() {
             </div>
           )}
 
-          {summaryShown && (
-            <MissionSummary
-              score={score}
-              trashCount={trashCount}
-              onRestart={() => { setSummaryShown(false); setSessionId(s => s + 1); }}
-              onMenu={() => { setSummaryShown(false); navigate('MENU'); }}
-            />
-          )}
         </div>
       )}
       </div>

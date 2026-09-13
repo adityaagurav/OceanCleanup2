@@ -3,3 +3,6 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Large third-party 3D model downloads (not referenced by the game)
+assets/boat/

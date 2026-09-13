@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { AssetManager } from '../engine/AssetManager.js';
+import { UnloadZone } from './UnloadZone.js';
 
 /**
  * HarbourManager.js — The harbour's compact U-shaped starting hub.
@@ -208,6 +209,12 @@ export class HarbourManager {
 
     // Natural rocky shoreline along the rear edge (behind the platform).
     this._buildRearShoreline();
+
+    // PART 6 — recycling / unloading station on the right wing deck (boat
+    // pulls up alongside in the channel-side water; the channel itself stays
+    // clear). Walkable pad registers with the character ground colliders.
+    this.unloadZone = new UnloadZone(this.root, this._mat, this._geo, this.wallColliders);
+    this.colliders.push(...this.unloadZone.walkableColliders);
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -1078,6 +1085,7 @@ export class HarbourManager {
   }
 
   dispose() {
+    this.unloadZone?.dispose();
     this.scene.remove(this.root);
   }
 }

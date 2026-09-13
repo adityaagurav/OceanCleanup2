@@ -4,7 +4,7 @@
  * States:
  *   LOADING  → Initial asset loading
  *   HARBOR   → Player is on the harbor, can walk and board boat
- *   BOAT     → Player is controlling the boat, mission active
+ *   BOAT     → Player is controlling the boat (sailing / cleaning)
  *   PAUSED   → Game loop ticks but physics/AI freeze
  *   GAMEOVER → End screen shown
  *

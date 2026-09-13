@@ -49,6 +49,7 @@ function HowToPlay({ onNavigate }) {
                 <KeyRow keys="A / D" desc="Steer left / right" />
                 <KeyRow keys="MOUSE" desc="Drag to look · click to lock cursor" />
                 <KeyRow keys="E" desc="Board / leave the boat" />
+                <KeyRow keys="E" desc="Unload trash at the harbour recycling zone" highlight />
               </div>
             </div>
 
@@ -69,11 +70,15 @@ function HowToPlay({ onNavigate }) {
                 </li>
                 <li className="flex gap-2.5">
                   <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
-                  <span>Earn <strong className="text-cyan-soft">+50 points</strong> per item. Collect <strong className="text-cyan-soft">20</strong> to complete the mission.</span>
+                  <span>Every reeled-in item is stored aboard your boat — the counter tracks your haul.</span>
                 </li>
                 <li className="flex gap-2.5">
                   <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
-                  <span>Dock back at the pier and press <span className="keycap">E</span> to leave the boat and see your summary.</span>
+                  <span>Dock back at the pier, or pull up to the green <strong className="text-cyan-soft">RECYCLING</strong> dock and press <span className="keycap">E</span> to unload.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <Icon name="check" size={16} className="text-aqua mt-0.5 shrink-0" />
+                  <span>Unloading earns <strong className="text-cyan-soft">coins</strong> and advances the <strong className="text-cyan-soft">Weekly Quests</strong> — open them via the WEEKLY button (top right).</span>
                 </li>
               </ul>
             </div>

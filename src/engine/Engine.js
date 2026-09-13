@@ -34,6 +34,7 @@ import { GameState }           from './GameStateManager.js';
 import { GraphicsConfig }      from '../config/GraphicsConfig.js';
 import { WorldConfig }         from '../config/WorldConfig.js';
 import { PerformanceConfig }   from '../config/PerformanceConfig.js';
+import { ProgressionConfig }   from '../config/ProgressionConfig.js';
 import { BoatConfig }          from '../config/BoatConfig.js';
 import { BoatAudioController } from '../audio/BoatAudioController.js';
 
@@ -52,9 +53,11 @@ export class Engine {
     this.boatController = null;
     this.harbour = null;
     this.waterFollowsCamera = true; // default to true for ocean
-    this.missionActive = false;
     this.isNearBoat = false;
     this._wasNearBoat = false;
+    this._wasNearUnloadZone = false; // last unload-zone proximity pushed to the UI
+    this.isUnloading = false;       // unload action lock — blocks E-spam double rewards
+    this._pendingUnload = null;     // { amount } captured at unload start
     this.canLeaveBoat = false; // docked at the pier — press E to leave the boat
     this._nightPushed  = false; // last night state pushed to the UI
     this._lastCompass  = null;  // last compass packet pushed to the UI (throttle)
@@ -182,9 +185,12 @@ export class Engine {
     this.chunks.update(spawnPos);
 
     // Trash
+    // Progression note: onCollect receives (boatTrashCount, worldTrash).
+    // Nothing auto-completes or pays out here — unloading/coins come later
+    // (see ProgressionConfig.js).
     this.trash = new TrashSystem(this.scene, {
-      onCollect:    (newScore, newCount) => { if (this.missionActive) this.callbacks.onCollect?.(newScore, newCount); },
-      onNearTrash:  (isNear) => { if (this.missionActive) this.callbacks.onNearTrash?.(isNear); },
+      onCollect:    (boatTrashCount, worldTrash) => this.callbacks.onCollect?.(boatTrashCount, worldTrash),
+      onNearTrash:  (isNear) => this.callbacks.onNearTrash?.(isNear),
     }, {
       ...this.options,
       cullRadius: PerformanceConfig.TRASH_CULL_RADIUS,
@@ -205,17 +211,23 @@ export class Engine {
         this.trash.pickupNearest(entityPos, deckPos);
       }
 
-      // One button for both boat interactions:
+      // One button for all boat interactions:
       //  - HARBOR: board when standing next to the boat
-      //  - BOAT:   leave when docked back at the pier
+      //  - BOAT:   leave when docked back at the pier, or unload at the
+      //            recycling zone (requires trash aboard — Part 3 makes it
+      //            actually move the trash; today it logs for dev testing)
       if (e.code === 'KeyE') {
         if (GameState.is('HARBOR')) {
           if (this.boat && this.dockTrigger) {
             const distance = this.character.getPosition().distanceTo(this.boat.position);
             if (distance < 6) this._boardBoat();
           }
-        } else if (GameState.is('BOAT') && this.canLeaveBoat) {
-          this._leaveBoat();
+        } else if (GameState.is('BOAT')) {
+          if (this.canLeaveBoat) {
+            this._leaveBoat();
+          } else {
+            this._tryUnload();
+          }
         }
       }
     };
@@ -422,6 +434,22 @@ export class Engine {
         this.boatController.fixedUpdate(this.input, dt);
       }
       this.trash.updateProximity(this.boatController ? this.boatController.physicsPosition : this.boat.position);
+
+      // Unload animation (Part 3): advance the arc FX; when it finishes,
+      // move the trash out of the boat and pay out exactly once.
+      if (this.isUnloading && this.harbour?.unloadZone) {
+        const done = this.harbour.unloadZone.updateUnload(dt);
+        if (done) {
+          const amount = this._pendingUnload?.amount ?? 0;
+          this.trash.boatTrashCount = Math.max(0, this.trash.boatTrashCount - amount); // 6. inventory out
+          const reward = amount * ProgressionConfig.COINS_PER_TRASH;                    // 7. reward
+          this.callbacks.onUnloadComplete?.(amount, reward);                            // 8-10. coins + HUD + +X
+          this._pendingUnload = null;
+          this.isUnloading = false;                                                     // 11. unlock
+          this.callbacks.onUnloadingChanged?.(false);
+        }
+      }
+
       // Update docking status for the "Press E to Leave Boat" prompt
       const atDock = this._isAtDock();
       if (atDock !== this.canLeaveBoat) {
@@ -575,9 +603,7 @@ export class Engine {
         fd
       );
       this.trash.updateReels(this.character.getDeckPosition());
-      if (this.missionActive) {
-        this.callbacks.onTick?.(this.character.speed * 1.94384);
-      }
+      this.callbacks.onTick?.(this.character.speed * 1.94384);
 
       // The moored boat still floats: same buoyancy, zero speed → gentle
       // Perlin rocking instead of the old sine-wave wobble.
@@ -633,9 +659,16 @@ export class Engine {
       this.trash.updateReels(deckPos);
       // Get speed from boat controller and convert to knots
       const speedKnots = speed * 1.94384;
-      // Only update HUD and scoring if mission is active
-      if (this.missionActive) {
-        this.callbacks.onTick?.(speedKnots);
+      this.callbacks.onTick?.(speedKnots);
+
+      // Unload-zone proximity (Part 2): detect + push on change only. The
+      // zone sits off the right wing's dock edge; nothing auto-unloads here.
+      if (this.harbour?.unloadZone) {
+        const nearZone = this.harbour.unloadZone.isBoatNear(this.boat.position);
+        if (nearZone !== this._wasNearUnloadZone) {
+          this._wasNearUnloadZone = nearZone;
+          this.callbacks.onUnloadZone?.(nearZone);
+        }
       }
       // Dynamic boat audio: engine/water/wind crossfade + harbour ambience.
       this.boatAudio.update(fd, {
@@ -840,19 +873,29 @@ export class Engine {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  //  Mission Control
+  //  Mode transitions (the old mission system was removed — the engine only
+  //  reports which mode the player is in; nothing tracks objectives anymore)
   // ──────────────────────────────────────────────────────────────────────────
 
-  _startMission() {
-    if (this.missionActive) return; // keep the mission alive across a pause/resume cycle
-    this.missionActive = true;
-    this.trash.start();
-    this.callbacks.onMissionState?.('started');
-  }
+  // ── Unloading (Part 3) ──────────────────────────────────────────────────
 
-  _stopMission() {
-    this.missionActive = false;
-    this.callbacks.onMissionState?.('harbour');
+  /**
+   * Try to start an unload at the recycling zone. Guards, in order:
+   * action lock → zone exists → boat inside zone → trash aboard. Captures the
+   * amount up front so the reward is computed from the stored value exactly
+   * once, when the animation completes — never per key press.
+   */
+  _tryUnload() {
+    if (this.isUnloading) return; // E E E E — one action at a time
+    const zone = this.harbour?.unloadZone;
+    if (!zone || !this.boat) return;
+    if (!zone.isBoatNear(this.boat.position)) return;      // 1. inside the zone
+    const amount = this.trash.boatTrashCount;
+    if (amount <= 0) return;                                // 2. has trash
+    this.isUnloading = true;                                // 3. lock
+    this._pendingUnload = { amount };                       // 4. store amount
+    zone.startUnload(this.boat.position, amount);           // 5. animation
+    this.callbacks.onUnloadingChanged?.(true);
   }
 
   /** Instant board — press E next to the boat to take control immediately. */
@@ -863,7 +906,7 @@ export class Engine {
     this.callbacks.onNearBoat?.(false);
     this.character.group.visible = false;
     this.character.setPosition(this.boat.position.x, this.boat.position.y, this.boat.position.z);
-    GameState.transition('BOAT'); // _enterBoat takes over control + starts the mission
+    GameState.transition('BOAT'); // _enterBoat takes over control
   }
 
   /** Instant leave — press E while docked to step back onto the pier. */
@@ -878,7 +921,6 @@ export class Engine {
     this.character.setPosition(exit.x, exit.y, exit.z);
     this.character.velocity.set(0, 0, 0);
     GameState.transition('HARBOR'); // _exitBoat restores character control
-    this._stopMission();
   }
 
   /** True when the boat is parked back at the pier (valid docking location). */
@@ -914,9 +956,9 @@ export class Engine {
       this.boatController.prevRotationY = this.boat.rotation.y;
       this.boatController.enabled = true;
     }
-    // Start the mission — no time limit, the player can sail as long as they like.
+    // Start ocean sailing — no objective system, the player just cleans.
     this.waterFollowsCamera = true; // water follows camera for ocean illusion
-    this._startMission();
+    this.callbacks.onGameMode?.('boat');
   }
 
   _exitHarbor() {
@@ -931,10 +973,19 @@ export class Engine {
       this.boatController.enabled = false;
     }
     this.character.enabled = true;
-    // NOTE: the mission is intentionally NOT stopped here. The mission ends in
-    // _leaveBoat (via _stopMission) when the player steps back onto the pier, so
-    // pausing the game (which also transitions out of BOAT) keeps the mission
-    // alive across a pause/resume cycle.
+    // Safety: leaving the boat mid-unload aborts the action cleanly — the
+    // completion path only runs in BOAT mode, so without this the action
+    // lock (isUnloading) would wedge for the rest of the session. Trash is
+    // NOT deducted and nothing is paid: the unload simply never happened.
+    if (this.isUnloading) {
+      this.harbour?.unloadZone?.cancelUnload();
+      this._pendingUnload = null;
+      this.isUnloading = false;
+      this.callbacks.onUnloadingChanged?.(false);
+    }
+    // Mode handoff only — collected trash stays aboard (boatTrashCount) until
+    // the future unload mechanic (Part 2). Nothing completes on return.
+    this.callbacks.onGameMode?.('harbor');
   }
 
   // ──────────────────────────────────────────────────────────────────────────

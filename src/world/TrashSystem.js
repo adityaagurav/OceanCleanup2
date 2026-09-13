@@ -3,8 +3,6 @@ import { AssetManager } from '../engine/AssetManager.js';
 import { WorldConfig }  from '../config/WorldConfig.js';
 import { PerformanceConfig } from '../config/PerformanceConfig.js';
 import { BoatConfig }   from '../config/BoatConfig.js';
-import { MissionConfig } from '../config/MissionConfig.js';
-
 /**
  * TrashSystem.js — Manages trash spawning, proximity detection, and reel pickup.
  *
@@ -27,8 +25,10 @@ export class TrashSystem {
     this.trashes     = [];
     this.activeReels = [];
     this.nearItem    = null;
-    this.score       = 0;
-    this.trashCount  = 0;
+    // Progression state (see ProgressionConfig.js):
+    //   boatTrashCount — collected aboard, NOT yet unloaded (no rewards here)
+    //   worldTrash     — live count of items still floating (this.trashes.length)
+    this.boatTrashCount = 0;
 
     // Draw-call cull radius for updateVisibility(): trash beyond this distance
     // never enters the render list. Pickup radius is 8 m, so the default 600 m
@@ -72,7 +72,7 @@ export class TrashSystem {
 
   // ── Public API ──────────────────────────────────────────────────
 
-  /** Start spawning mission pickups only after the player boards the boat. */
+  /** Start spawning pickups (was "mission pickups" — spawning is now unconditional on session start). */
   start() {
     if (this._hasSpawned) return;
     this._hasSpawned = true;
@@ -194,9 +194,8 @@ export class TrashSystem {
         if (idx !== -1) this.trashes.splice(idx, 1);
         this.activeReels.splice(i, 1);
 
-        this.trashCount++;
-        this.score += MissionConfig.SCORE_PER_TRASH;
-        this.callbacks.onCollect?.(this.score, this.trashCount);
+        this.boatTrashCount++;
+        this.callbacks.onCollect?.(this.boatTrashCount, this.worldTrash);
       } else {
         const cur = new THREE.Vector3().lerpVectors(reel.startPos, deckPos, reel.progress);
         cur.y = Math.sin(reel.progress * Math.PI) * 2 + 0.4;
@@ -229,6 +228,11 @@ export class TrashSystem {
     this._ring.visible = false;
     this.nearItem = null;
     this.callbacks.onNearTrash?.(false);
+  }
+
+  /** Live count of trash still floating in the world (ProgressionConfig.worldTrash). */
+  get worldTrash() {
+    return this.trashes.length;
   }
 
   /**

@@ -7,7 +7,7 @@ import { WorldConfig } from '../config/WorldConfig.js';
  *
  * The three.js Water plane is a flat, normal-mapped surface (no real vertex
  * displacement), so every object that should "float" — the boat's four buoyancy
- * points, the wake ribbon, mission trash, harbour buoys — reads its water
+ * points, the wake ribbon, floating trash, harbour buoys — reads its water
  * height from THIS class instead. Because everyone samples the same field, the
  * boat, its wake and the trash all move in lockstep with the same waves.
  *

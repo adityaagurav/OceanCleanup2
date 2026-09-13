@@ -125,7 +125,7 @@ function Settings({ onNavigate, settings, onUpdateSettings }) {
                   { keys: 'A / D', desc: 'Steer left / right' },
                   { keys: 'MOUSE', desc: 'Drag to look around (click to lock cursor)' },
                   { keys: 'F',     desc: 'Reel in nearest trash' },
-                  { keys: 'E',     desc: 'Board / leave the boat (near it, or at the dock)' },
+                  { keys: 'E',     desc: 'Board / leave the boat · unload at the recycling zone' },
                   { keys: 'F3',    desc: 'Debug overlay' },
                 ].map(({ keys, desc }) => (
                   <div key={desc} className="flex items-center justify-between gap-4">
@@ -165,9 +165,6 @@ function Settings({ onNavigate, settings, onUpdateSettings }) {
                       </button>
                     ))}
                   </div>
-                </Row>
-                <Row label="Mission goal" hint="Items to collect before the mission completes">
-                  <span className="chip-value text-lg">20</span>
                 </Row>
               </>
             )}

@@ -335,6 +335,36 @@
 .anim-wave-fast { animation: waveX 15s linear infinite; }
 .anim-glow     { animation: glowPulse 6s ease-in-out infinite; }
 
+/* ── Landing page (MainMenu) ─────────────────────────────────── */
+@keyframes heroRise {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.anim-hero-rise { animation: heroRise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+.anim-rise-1 { animation-delay: 0.05s; }
+.anim-rise-2 { animation-delay: 0.14s; }
+.anim-rise-3 { animation-delay: 0.23s; }
+.anim-rise-4 { animation-delay: 0.32s; }
+
+/* Coin reward popup — rises ~14px, fades out, ~1s, compositor-only */
+@keyframes coinPop {
+  0%   { opacity: 0; transform: translateY(6px); }
+  25%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-14px); }
+}
+.coin-pop { animation: coinPop 1.05s ease-out both; }
+
+/* Diorama micro-motion: boat bobs, trash bobs out of phase */
+@keyframes dioBob {
+  0%, 100% { transform: translateY(0) rotate(0.4deg); }
+  50%      { transform: translateY(-4px) rotate(-0.6deg); }
+}
+.dio-boat  { animation: dioBob 5.5s ease-in-out infinite; transform-origin: 600px 300px; }
+.dio-trash { animation: dioBob 4.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .dio-boat, .dio-trash { animation: none; }
+}
+
 /* Subtle scrollbars for menu screens */
 .menu-scroll::-webkit-scrollbar { width: 8px; }
 .menu-scroll::-webkit-scrollbar-thumb {
