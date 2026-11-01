@@ -1,5 +1,20 @@
 import http from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
+import { BoatCollisionSystem } from '../src/physics/BoatCollisionSystem.js';
+import { LeaderboardStore } from './LeaderboardStore.js';
+
+// ── Recycling points (server-authoritative) ────────────────────────────────
+// Points are ONLY earned by recycling garbage items at the harbour, always
+// calculated HERE from the validated recycled item count — clients submit a
+// transaction, never a balance. Coins (client-side, ProgressionConfig) stay
+// completely separate from points.
+export const RECYCLE_POINTS_PER_ITEM = 10; // 1 recycled item = 10 pts
+export const MAX_RECYCLE_ITEMS = 15;       // Level-3 cargo capacity is the max haul (15 items)
+export const RECYCLE_MIN_INTERVAL_MS = 1000; // ≥ the unload animation (1.3 s) between awards
+
+// Aliases for backwards compatibility with any existing imports
+export const RECYCLE_POINTS_PER_KG = RECYCLE_POINTS_PER_ITEM;
+export const MAX_RECYCLE_KG = MAX_RECYCLE_ITEMS;
 
 /**
  * Visual color themes for distinct player boats.
@@ -73,6 +88,10 @@ export class MultiplayerServer {
     this._nextBerthIndex = 0;
     this._nextColorIndex = 0;
 
+    // Lifetime recycling points (server-authoritative, survives disconnects;
+    // file-backed in production via `leaderboardFile`, in-memory in tests).
+    this._leaderboard = options.leaderboardStore || new LeaderboardStore({ file: options.leaderboardFile });
+
     // HTTP server for health check and Socket.IO handshake
     this.httpServer = http.createServer((req, res) => {
       this._handleHttpRequest(req, res);
@@ -92,6 +111,9 @@ export class MultiplayerServer {
     });
 
     this._setupSocketHandlers();
+
+    // Phase 3B: Server-authoritative physics & boat-to-boat collision loop (30 Hz)
+    this._physicsInterval = setInterval(() => this._tickPhysics(), 33);
   }
 
   /**
@@ -309,6 +331,11 @@ export class MultiplayerServer {
       this._handlePlayerState(socket, data);
     });
 
+    // ── Recycling points: deliver a completed unload transaction ───
+    socket.on('recycle:deliver', (data, ack) => {
+      this._handleRecycleDeliver(socket, data, ack);
+    });
+
     // Phase 4/5: Game World Synchronization (trash, ocean events)
     socket.on('game:sync', (data) => {
       this._handleGameSyncStub(socket, data);
@@ -330,6 +357,11 @@ export class MultiplayerServer {
     // Resolve username (handle duplicates & sanitize)
     const finalUsername = this.resolveUniqueUsername(data.username, socket.id);
     session.username = finalUsername;
+
+    // Lifetime recycling points follow the player's identity and are NEVER
+    // reset by disconnects (the store keeps them; the file keeps them across
+    // restarts). Clients only receive this balance — they cannot set it.
+    session.points = this._leaderboard.getPoints(finalUsername);
 
     // Assign color theme and mooring berth if not already assigned
     if (!session.color) {
@@ -407,6 +439,10 @@ export class MultiplayerServer {
 
     // 3. Broadcast updated full player list to all clients
     this.io.emit('players:list', { players: this.getJoinedPlayers() });
+
+    // 4. Broadcast the latest leaderboard so the joiner AND everyone else
+    //    see identical rankings immediately (late joiners get it here).
+    this._broadcastLeaderboard();
   }
 
   /**
@@ -447,6 +483,8 @@ export class MultiplayerServer {
       });
       // Broadcast updated active players list
       this.io.emit('players:list', { players: this.getJoinedPlayers() });
+      // Rankings change when a player leaves the session board
+      this._broadcastLeaderboard();
     }
   }
 
@@ -459,21 +497,52 @@ export class MultiplayerServer {
     if (!session || !session.hasJoined) return;
     session.lastSeen = Date.now();
 
-    if (data.transform) {
-      session.transform = {
-        ...session.transform,
-        ...data.transform,
-      };
-    } else if (typeof data.x === 'number') {
-      session.transform = {
-        x: data.x,
-        y: data.y ?? (session.transform ? session.transform.y : 1.5),
-        z: data.z,
-        yaw: data.yaw ?? (session.transform ? session.transform.yaw : 0),
-        speed: data.speed ?? 0,
-        animState: data.animState || (session.transform ? session.transform.animState : 'Idle'),
-      };
+    const inCollisionCooldown = session.collisionCooldown && Date.now() < session.collisionCooldown;
+    let partner = null;
+    if (inCollisionCooldown && session.collisionPartnerId) {
+      for (const p of this.players.values()) {
+        if (p.playerId === session.collisionPartnerId) {
+          partner = p;
+          break;
+        }
+      }
     }
+
+    let rawX = typeof data.x === 'number' ? data.x : (data.transform?.x ?? session.transform?.x ?? 0);
+    let rawY = typeof data.y === 'number' ? data.y : (data.transform?.y ?? session.transform?.y ?? 1.5);
+    let rawZ = typeof data.z === 'number' ? data.z : (data.transform?.z ?? session.transform?.z ?? 0);
+    let rawYaw = typeof data.yaw === 'number' ? data.yaw : (data.transform?.yaw ?? session.transform?.yaw ?? 0);
+    let rawSpeed = typeof data.speed === 'number' ? data.speed : (data.transform?.speed ?? session.transform?.speed ?? 0);
+    let rawDeflVx = typeof data.deflectionVx === 'number' ? data.deflectionVx : (data.transform?.deflectionVx ?? session.transform?.deflectionVx ?? 0);
+    let rawDeflVz = typeof data.deflectionVz === 'number' ? data.deflectionVz : (data.transform?.deflectionVz ?? session.transform?.deflectionVz ?? 0);
+    let rawAnim = data.animState || data.transform?.animState || session.transform?.animState || 'Idle';
+
+    // Requirement 9: Ensure normal movement updates do not overwrite collision corrections
+    if (inCollisionCooldown && partner?.transform && session.transform) {
+      const prevDist = Math.hypot(session.transform.x - partner.transform.x, session.transform.z - partner.transform.z);
+      const newDist = Math.hypot(rawX - partner.transform.x, rawZ - partner.transform.z);
+
+      // If the client's packet attempts to push back inside the partner boat:
+      if (newDist < prevDist - 0.05) {
+        rawX = session.transform.x;
+        rawZ = session.transform.z;
+        rawSpeed = Math.min(rawSpeed, session.transform.speed);
+        rawDeflVx = session.transform.deflectionVx || rawDeflVx;
+        rawDeflVz = session.transform.deflectionVz || rawDeflVz;
+      }
+    }
+
+    session.transform = {
+      x: rawX,
+      y: rawY,
+      z: rawZ,
+      yaw: rawYaw,
+      speed: rawSpeed,
+      deflectionVx: rawDeflVx,
+      deflectionVz: rawDeflVz,
+      animState: rawAnim,
+    };
+
     if (data.state) {
       session.state = data.state;
     }
@@ -530,11 +599,225 @@ export class MultiplayerServer {
     this.io.emit('players:list', { players: this.getJoinedPlayers() });
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  // Recycling Points & Live Leaderboard (server-authoritative)
+  // ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * Award lifetime recycling points for a completed unload transaction.
+   *
+   * The client submits ONLY { transactionId, itemCount } (legacy data.kg / data.amount / data.count also accepted)
+   * — the point value itself is always computed here (itemCount × RECYCLE_POINTS_PER_ITEM). Validation layers:
+   *   1. session must be joined
+   *   2. transactionId: unique string (per-session dedupe → no double awards)
+   *   3. itemCount: integer in [1, MAX_RECYCLE_ITEMS] (Level-3 cargo capacity cap)
+   *   4. state: 'ACTIVE' (unloading is a boat action at the recycling zone)
+   *   5. rate limit: ≥ RECYCLE_MIN_INTERVAL_MS between awards
+   */
+  _handleRecycleDeliver(socket, data = {}, ack) {
+    const session = this.players.get(socket.id);
+    const reply = (payload) => {
+      if (typeof ack === 'function') ack(payload);
+      if (!payload.success) {
+        console.warn(`[MultiplayerServer] Recycle rejected for ${session?.username || socket.id}: ${payload.error}`);
+      }
+    };
+
+    if (!session || !session.hasJoined) {
+      return reply({ success: false, error: 'not-joined' });
+    }
+    session.lastSeen = Date.now();
+
+    // 2. Transaction identity — required, bounded, deduped.
+    const transactionId =
+      typeof data.transactionId === 'string' && data.transactionId.length > 0 && data.transactionId.length <= 80
+        ? data.transactionId
+        : null;
+    if (!transactionId) {
+      return reply({ success: false, error: 'invalid-transaction' });
+    }
+    if (!session._recycleTxIds) {
+      session._recycleTxIds = new Set();
+      session._recycleTxOrder = [];
+    }
+    if (session._recycleTxIds.has(transactionId)) {
+      // Same transaction re-sent — reject without awarding again.
+      return reply({ success: false, error: 'duplicate-transaction' });
+    }
+
+    // 3. Amount validation — the ONLY client input that affects points.
+    // Accepts itemCount, or fallbacks (count, amount, kg for backwards compatibility).
+    const itemCount = data.itemCount ?? data.count ?? data.amount ?? data.kg;
+    if (!Number.isInteger(itemCount) || itemCount < 1 || itemCount > MAX_RECYCLE_ITEMS) {
+      return reply({ success: false, error: 'invalid-amount' });
+    }
+
+    // 4. State validation — the player must be out sailing (in the boat).
+    if (session.state !== 'ACTIVE') {
+      return reply({ success: false, error: 'invalid-state' });
+    }
+
+    // 5. Rate limit — the unload animation itself takes 1.3 s.
+    const now = Date.now();
+    if (session._lastRecycleAt && now - session._lastRecycleAt < RECYCLE_MIN_INTERVAL_MS) {
+      return reply({ success: false, error: 'too-soon' });
+    }
+
+    // Dedupe bookkeeping (bounded memory: keep the most recent 32 ids).
+    session._recycleTxIds.add(transactionId);
+    session._recycleTxOrder.push(transactionId);
+    if (session._recycleTxOrder.length > 32) {
+      session._recycleTxIds.delete(session._recycleTxOrder.shift());
+    }
+    session._lastRecycleAt = now;
+
+    // ── Award: calculated and stored on the server, persisted for lifetime ──
+    const points = itemCount * RECYCLE_POINTS_PER_ITEM;
+    session.points = (session.points || 0) + points;
+    this._leaderboard.setPoints(session.username, session.points);
+
+    console.log(
+      `[MultiplayerServer] "${session.username}" recycled ${itemCount} items → +${points} pts (lifetime: ${session.points})`
+    );
+
+    // Confirm to the earner (their display comes from the shared broadcast —
+    // this ack/award event is only feedback, never a client-side balance).
+    socket.emit('points:awarded', {
+      itemCount,
+      kg: itemCount,
+      points,
+      totalPoints: session.points,
+      transactionId,
+    });
+
+    // Everyone sees the same new rankings immediately.
+    this._broadcastLeaderboard();
+
+    return reply({ success: true, itemCount, kg: itemCount, points, totalPoints: session.points, transactionId });
+  }
+
+  /**
+   * Build the ranked leaderboard for all JOINED players.
+   * Stable tie-break: more points first → earlier connection wins ties →
+   * playerId as the final deterministic tiebreaker. Ranks are 1-based.
+   */
+  _buildLeaderboardEntries() {
+    return this.getJoinedPlayers()
+      .map((p) => ({
+        playerId: p.playerId,
+        username: p.username,
+        points: this.players.get(p.socketId)?.points || 0,
+        connectedAt: this.players.get(p.socketId)?.connectedAt || 0,
+      }))
+      .sort((a, b) => {
+        if (b.points !== a.points) return b.points - a.points;
+        if (a.connectedAt !== b.connectedAt) return a.connectedAt - b.connectedAt;
+        return a.playerId < b.playerId ? -1 : 1;
+      })
+      .map((e, i) => ({ rank: i + 1, playerId: e.playerId, username: e.username, points: e.points }));
+  }
+
+  /** Broadcast the full rankings to every connected client (join/leave/award only). */
+  _broadcastLeaderboard() {
+    this.io.emit('leaderboard:update', {
+      entries: this._buildLeaderboardEntries(),
+      serverTime: Date.now(),
+    });
+  }
+
   _handleGameSyncStub(socket, data) {
     // Future Phase 4/5: Shared trash pickup sync, global quests
     const session = this.players.get(socket.id);
     if (!session) return;
     session.lastSeen = Date.now();
+  }
+
+  /**
+   * Phase 3B: Server-authoritative physics and boat-to-boat collision detection loop (30 Hz).
+   * Excludes docked boats (state: 'DOCKED').
+   */
+  _tickPhysics() {
+    // Collect all active ocean boats
+    const activeBoats = [];
+    for (const session of this.players.values()) {
+      if (!session.hasJoined || session.state !== 'ACTIVE') continue;
+      const t = session.transform;
+      if (!t || typeof t.x !== 'number' || typeof t.z !== 'number') continue;
+
+      const lvl = session.boatLevel || 1;
+      const dims = BoatCollisionSystem.getHullDimensions(lvl);
+
+      // Water drag decay on any residual deflection
+      if (t.deflectionVx || t.deflectionVz) {
+        const decay = Math.exp(-3.6 * 0.033);
+        t.deflectionVx = (t.deflectionVx || 0) * decay;
+        t.deflectionVz = (t.deflectionVz || 0) * decay;
+        if (Math.abs(t.deflectionVx) < 0.01) t.deflectionVx = 0;
+        if (Math.abs(t.deflectionVz) < 0.01) t.deflectionVz = 0;
+      }
+
+      activeBoats.push({
+        id: session.playerId,
+        playerId: session.playerId,
+        x: t.x,
+        z: t.z,
+        yaw: t.yaw || 0,
+        speed: t.speed || 0,
+        level: lvl,
+        mass: dims.mass,
+        deflectionVx: t.deflectionVx || 0,
+        deflectionVz: t.deflectionVz || 0,
+        session,
+      });
+    }
+
+    if (activeBoats.length < 2) return;
+
+    // Run multi-boat collision resolution
+    const dt = 0.033;
+    const collisions = BoatCollisionSystem.resolveMultipleCollisions(activeBoats, dt);
+
+    if (collisions.length > 0) {
+      for (const col of collisions) {
+        // Update authoritative session transforms
+        const bA = activeBoats.find((b) => b.id === col.boatA.playerId);
+        const bB = activeBoats.find((b) => b.id === col.boatB.playerId);
+
+        if (bA?.session) {
+          bA.session.transform.x = col.boatA.x;
+          bA.session.transform.z = col.boatA.z;
+          bA.session.transform.yaw = col.boatA.yaw;
+          bA.session.transform.speed = col.boatA.speed;
+          bA.session.transform.deflectionVx = col.boatA.deflectionVx;
+          bA.session.transform.deflectionVz = col.boatA.deflectionVz;
+          bA.session.collisionCooldown = Date.now() + 250;
+          bA.session.collisionPartnerId = bB?.id;
+        }
+
+        if (bB?.session) {
+          bB.session.transform.x = col.boatB.x;
+          bB.session.transform.z = col.boatB.z;
+          bB.session.transform.yaw = col.boatB.yaw;
+          bB.session.transform.speed = col.boatB.speed;
+          bB.session.transform.deflectionVx = col.boatB.deflectionVx;
+          bB.session.transform.deflectionVz = col.boatB.deflectionVz;
+          bB.session.collisionCooldown = Date.now() + 250;
+          bB.session.collisionPartnerId = bA?.id;
+        }
+
+        // Broadcast collision event to all connected clients
+        this.io.emit('boats:collision', {
+          boatA: col.boatA,
+          boatB: col.boatB,
+          normal: col.normal,
+          depth: col.depth,
+          closingSpeed: col.closingSpeed,
+          impulse: col.impulse,
+          contactPoint: col.contactPoint,
+          timestamp: Date.now(),
+        });
+      }
+    }
   }
 
   /**
@@ -557,6 +840,10 @@ export class MultiplayerServer {
    */
   stop() {
     return new Promise((resolve) => {
+      if (this._physicsInterval) {
+        clearInterval(this._physicsInterval);
+        this._physicsInterval = null;
+      }
       this.io.close(() => {
         this.httpServer.close(() => {
           this.players.clear();

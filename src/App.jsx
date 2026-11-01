@@ -294,6 +294,11 @@ function App() {
     if (networkManager.state.players.length > 0) {
       engine.syncRemotePlayers(networkManager.state.players, networkManager.state.playerId);
     }
+    // Physical harbor leaderboard: apply the latest broadcast (if any) so a
+    // late-joining client that already received rankings still shows them.
+    if (networkManager.state.leaderboard) {
+      engine.setLeaderboard(networkManager.state.leaderboard);
+    }
 
     const unsubJoinSuccess = networkManager.on('joinSuccess', (payload) => {
       if (payload.localPlayer) {
@@ -324,6 +329,14 @@ function App() {
       engine.handleRemotePlayerState(data);
     });
 
+    const unsubBoatCollision = networkManager.on('boatCollision', (data) => {
+      engine.handleBoatCollision(data);
+    });
+
+    const unsubLeaderboard = networkManager.on('leaderboardUpdate', (data) => {
+      engine.setLeaderboard(data);
+    });
+
     return () => {
       unsubJoinSuccess();
       unsubPlayerJoined();
@@ -331,6 +344,8 @@ function App() {
       unsubPlayersList();
       unsubPlayerMoved();
       unsubPlayerStateChanged();
+      unsubBoatCollision();
+      unsubLeaderboard();
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (coinPopupTimerRef.current) clearTimeout(coinPopupTimerRef.current);
       if (upgradeMessageTimerRef.current) clearTimeout(upgradeMessageTimerRef.current);

@@ -43,6 +43,7 @@ export class NetworkManager {
       error: null,
       serverUrl: this.serverUrl,
       lastNotification: null, // { id, text, type: 'join'|'leave', timestamp }
+      leaderboard: null,      // { entries: [{ rank, playerId, username, points }], serverTime }
     };
 
     this._pingTimer = null;
@@ -219,8 +220,22 @@ export class NetworkManager {
       this._emitEvent('playerMoved', payload);
     });
 
+    // ── Recycling points & live leaderboard ────────────────────────
+    this.socket.on('leaderboard:update', (payload) => {
+      this._updateState({ leaderboard: payload });
+      this._emitEvent('leaderboardUpdate', payload);
+    });
+
+    this.socket.on('points:awarded', (payload) => {
+      this._emitEvent('pointsAwarded', payload);
+    });
+
     this.socket.on('player:state_changed', (payload) => {
       this._emitEvent('playerStateChanged', payload);
+    });
+
+    this.socket.on('boats:collision', (payload) => {
+      this._emitEvent('boatCollision', payload);
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -416,6 +431,22 @@ export class NetworkManager {
     if (this.socket?.connected) {
       this.socket.emit('player:state', data);
     }
+  }
+
+  /**
+   * Report a completed recycling transaction (unload at the harbour).
+   * Only the item count + transaction id are sent — the server
+   * calculates the points itself and broadcasts the new leaderboard.
+   * @param {{ transactionId: string, itemCount: number, kg?: number }} data
+   * @returns {Promise<object|null>} server ack (null when not connected)
+   */
+  sendRecycleDeliver(data) {
+    if (!this.socket?.connected) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      this.socket.emit('recycle:deliver', data, (ack) => resolve(ack || null));
+      // Don't hang the caller forever if the server never answers.
+      setTimeout(() => resolve(null), 4000);
+    });
   }
 
   sendGameSync(data) {

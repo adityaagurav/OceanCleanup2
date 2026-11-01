@@ -16,13 +16,28 @@ export const BoatConfig = {
 
   // Session-only boat progression. Costs are charged when upgrading TO a level.
   LEVELS: [
-    { level: 1, name: 'Starter', appearance: 'Starter sailboat', capacity: 5,  cost: 0,  speed: 8.0, modelScale: 1.0 },
-    { level: 2, name: 'Improved', appearance: 'Expanded working sailboat', capacity: 10, cost: 20, speed: 9.5, modelScale: 1.18 },
-    { level: 3, name: 'Advanced', appearance: 'Advanced cleanup cruiser', capacity: 15, cost: 50, speed: 11.0, modelScale: 1.38 },
+    { level: 1, name: 'Starter', appearance: 'Starter sailboat', capacity: 5,  cost: 0,  speed: 8.0, modelScale: 1.0,  mass: 1200 },
+    { level: 2, name: 'Improved', appearance: 'Expanded working sailboat', capacity: 10, cost: 20, speed: 9.5, modelScale: 1.18, mass: 1800 },
+    { level: 3, name: 'Advanced', appearance: 'Advanced cleanup cruiser', capacity: 15, cost: 50, speed: 11.0, modelScale: 1.38, mass: 2800 },
   ],
 
   // Proximity distance (in meters) for boat interactions at the harbor (upgrades / boarding)
   INTERACTION_DISTANCE: 6.0,
+
+  // ── Phase 3B: Boat-to-Boat Collision Physics ──────────────────
+  COLLISION: {
+    BASE_LENGTH: 4.0,           // Level 1 hull length (m)
+    BASE_WIDTH: 2.0,            // Level 1 hull beam/width (m)
+    BASE_MASS: 1200,            // Level 1 mass (kg)
+    MASS_BY_LEVEL: [1200, 1800, 2800], // Masses for levels 1, 2, 3
+    RESTITUTION: 0.22,          // Slightly bouncy, heavily damped watercraft collision
+    FRICTION: 0.25,             // Tangential hull sliding friction
+    SEPARATION_SLOP: 0.08,      // Minimum separation buffer to prevent resticking
+    WATER_DRAG_DEFLECTION: 3.6, // Exponential decay of lateral/deflection push (1/s)
+    ANGULAR_DEFLECTION_SCALE: 0.14, // Yaw deflection torque scale per impulse
+    MAX_DEFLECTION_SPEED: 10.0, // Numerical safety cap on deflection velocity (m/s)
+    MAX_ANGULAR_DEFLECTION: 2.2, // Max angular yaw rate from impact (rad/s)
+  },
 
 
   // ── Momentum & inertia (BoatInertia) ──────────────────────────

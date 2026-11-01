@@ -41,6 +41,7 @@ import { FishingSystem }       from '../world/FishingSystem.js';
 import { RemotePlayerManager } from '../multiplayer/RemotePlayerManager.js';
 import { buildBoatModel }     from '../player/BoatModelBuilder.js';
 import { networkManager }      from '../multiplayer/NetworkManager.js';
+import { BoatCollisionSystem } from '../physics/BoatCollisionSystem.js';
 
 export class Engine {
   constructor(container, callbacks = {}, options = {}) {
@@ -68,6 +69,7 @@ export class Engine {
     this._lastCompass  = null;  // last compass packet pushed to the UI (throttle)
     this.fishing = null;       // FishingSystem — initialized when harbour + boat are ready
     this.remotePlayers = null; // RemotePlayerManager — Phase 2 multiplayer 3D boats
+    this._lastLeaderboard = null; // last leaderboard broadcast (harbor board)
     this._netTimer = 0;        // 20 Hz network broadcast timer
 
     this.wallColliders = []; // solid props/buildings — character horizontal blocking
@@ -478,6 +480,35 @@ export class Engine {
     } else if (GameState.is('BOAT')) {
       if (this.boatController) {
         this.boatController.fixedUpdate(this.input, dt);
+
+        // Phase 3B: Predictive local boat-to-boat collision against active remote ocean boats
+        if (this.remotePlayers) {
+          const remoteBoats = this.remotePlayers.getActiveOceanBoats();
+          if (remoteBoats.length > 0) {
+            const localId = networkManager.state.playerId || 'local';
+            const localBoatState = {
+              id: localId,
+              playerId: localId,
+              x: this.boatController.physicsPosition.x,
+              z: this.boatController.physicsPosition.z,
+              yaw: this.boatController.physicsRotationY,
+              speed: this.boatController.speed,
+              level: this.boatLevel,
+              mass: this.boatController.mass,
+              deflectionVx: this.boatController.deflectionVelocity.x,
+              deflectionVz: this.boatController.deflectionVelocity.z,
+            };
+
+            for (const rBoat of remoteBoats) {
+              const col = BoatCollisionSystem.resolvePairCollision(localBoatState, rBoat);
+              if (col) {
+                this.boatController.applyCollisionCorrection(col.boatA);
+                this.remotePlayers.handleBoatCollision(col);
+                break;
+              }
+            }
+          }
+        }
       }
       // Fishing system update in BOAT mode
       if (this.fishing && this.boat) {
@@ -491,9 +522,17 @@ export class Engine {
         const done = this.harbour.unloadZone.updateUnload(dt);
         if (done) {
           const amount = this._pendingUnload?.amount ?? 0;
+          const transactionId = this._pendingUnload?.transactionId || null;
           this.trash.setBoatTrashCount(this.trash.boatTrashCount - amount); // 6. inventory out
           const reward = amount * ProgressionConfig.COINS_PER_TRASH;                    // 7. reward
           this.callbacks.onUnloadComplete?.(amount, reward);                            // 8-10. coins + HUD + +X
+          // Recycling points (server-authoritative): report the completed
+          // transaction — the SERVER computes itemCount × 10, stores the lifetime
+          // balance and broadcasts the updated leaderboard to everyone.
+          // Coins stay client-side; points never come back from this client.
+          if (amount > 0 && transactionId) {
+            networkManager.sendRecycleDeliver({ transactionId, itemCount: amount, kg: amount });
+          }
           this._pendingUnload = null;
           this.isUnloading = false;                                                     // 11. unlock
           this.callbacks.onUnloadingChanged?.(false);
@@ -532,12 +571,16 @@ export class Engine {
           const pos = this.boatController ? this.boatController.physicsPosition : this.boat.position;
           const yaw = this.boatController ? this.boatController.physicsRotationY : this.boat.rotation.y;
           const speed = this.boatController ? this.boatController.speed : 0;
+          const deflVx = this.boatController ? this.boatController.deflectionVelocity.x : 0;
+          const deflVz = this.boatController ? this.boatController.deflectionVelocity.z : 0;
           networkManager.sendPlayerMove({
             x: pos.x,
             y: pos.y,
             z: pos.z,
             yaw,
             speed,
+            deflectionVx: deflVx,
+            deflectionVz: deflVz,
             state: 'ACTIVE',
             boatLevel: this.boatLevel,
           });
@@ -865,6 +908,31 @@ export class Engine {
 
     // Multiplayer remote boats & nametag manager (Phase 2)
     this.remotePlayers = new RemotePlayerManager(this.scene, this.waveSampler);
+
+    // Re-apply the last known leaderboard to the freshly built harbor board
+    // (the harbor is rebuilt on every return from the boat).
+    this._applyLeaderboard();
+  }
+
+  /**
+   * Apply a leaderboard broadcast (`leaderboard:update`) to the physical
+   * harbor board. The payload is cached so a harbor rebuild (re-entering from
+   * the boat) re-renders the same rankings without waiting for the next
+   * server broadcast.
+   * @param {{ entries: Array<{rank:number,playerId:string,username:string,points:number}> }} payload
+   */
+  setLeaderboard(payload) {
+    if (!payload || !Array.isArray(payload.entries)) return;
+    this._lastLeaderboard = payload;
+    this._applyLeaderboard();
+  }
+
+  _applyLeaderboard() {
+    if (!this._lastLeaderboard || !this.harbour) return;
+    this.harbour.updateLeaderboard(
+      this._lastLeaderboard.entries,
+      networkManager.state.playerId || this.remotePlayers?.localPlayerId || null
+    );
   }
 
 
@@ -947,7 +1015,13 @@ export class Engine {
     const amount = this.trash.boatTrashCount;
     if (amount <= 0) return;                                // 2. has trash
     this.isUnloading = true;                                // 3. lock
-    this._pendingUnload = { amount };                       // 4. store amount
+    // The transaction id makes the server-side point award idempotent — a
+    // re-sent delivery for the same unload can never award twice.
+    this._pendingUnload = {
+      amount,
+      transactionId: globalThis.crypto?.randomUUID?.() ||
+        `tx_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`,
+    };
     zone.startUnload(this.boat.position, amount);           // 5. animation
     this.callbacks.onUnloadingChanged?.(true);
   }
@@ -1006,6 +1080,21 @@ export class Engine {
 
   handleRemotePlayerState(data) {
     this.remotePlayers?.handlePlayerState(data);
+  }
+
+  handleBoatCollision(data) {
+    if (!data) return;
+    const localId = networkManager.state.playerId || this.remotePlayers?.localPlayerId;
+    let localData = null;
+    if (data.boatA && data.boatA.playerId === localId) {
+      localData = data.boatA;
+    } else if (data.boatB && data.boatB.playerId === localId) {
+      localData = data.boatB;
+    }
+    if (localData && this.boatController) {
+      this.boatController.applyCollisionCorrection(localData);
+    }
+    this.remotePlayers?.handleBoatCollision(data);
   }
 
   /** Instant board — press E next to the boat to take control immediately. */

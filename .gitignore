@@ -6,3 +6,6 @@ dist-ssr
 
 # Large third-party 3D model downloads (not referenced by the game)
 assets/boat/
+# Server-side lifetime recycling points (runtime data)
+server/leaderboard-data.json
+server/leaderboard-data.json.tmp

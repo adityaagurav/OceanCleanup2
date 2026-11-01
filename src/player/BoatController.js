@@ -38,7 +38,14 @@ export class BoatController {
     this.accel    = 0; // signed acceleration (m/s²) — for buoyancy pitch
     this.maxSpeed = BoatConfig.MAX_SPEED;
     this.reverseSpeed = BoatConfig.REVERSE_SPEED;
-    this.hullHalfLength = 2.0;
+    this.level = 1;
+    this.mass = BoatConfig.COLLISION?.BASE_MASS || 1200;
+    this.hullHalfLength = (BoatConfig.COLLISION?.BASE_LENGTH || 4.0) * 0.5;
+    this.hullHalfWidth = (BoatConfig.COLLISION?.BASE_WIDTH || 2.0) * 0.5;
+
+    // Phase 3B: Collision deflection & impulse response
+    this.deflectionVelocity = new THREE.Vector3(0, 0, 0); // world XZ push velocity
+    this.deflectionYawRate = 0; // angular torque impulse from off-center impacts
 
     // Physics interpolation state
     this.physicsPosition = new THREE.Vector3();
@@ -71,6 +78,13 @@ export class BoatController {
     this.inertia.maxSpeed = this.maxSpeed;
     this.inertia.update(input, dt);
 
+    // If recovering from a collision, clamp forward speed so the boat cannot penetrate through
+    if (this.collisionCooldown && Date.now() < this.collisionCooldown) {
+      if (this.inertia.speed > 2.0) {
+        this.inertia.speed = 2.0;
+      }
+    }
+
     this.speed    = this.inertia.speed;
     this.throttle = this.inertia.throttle;
     this.steer    = this.inertia.steer;
@@ -96,6 +110,27 @@ export class BoatController {
       this.physicsPosition.add(travel.multiplyScalar(moveDist));
     }
 
+    // --- 2.5 Phase 3B: Apply lateral deflection velocity & water drag damping ---
+    if (this.deflectionVelocity.lengthSq() > 0.0001) {
+      this.physicsPosition.x += this.deflectionVelocity.x * dt;
+      this.physicsPosition.z += this.deflectionVelocity.z * dt;
+      const dragFactor = Math.exp(-(BoatConfig.COLLISION?.WATER_DRAG_DEFLECTION || 3.6) * dt);
+      this.deflectionVelocity.multiplyScalar(dragFactor);
+      if (this.deflectionVelocity.lengthSq() < 0.0025) {
+        this.deflectionVelocity.set(0, 0, 0);
+      }
+    }
+
+    // Apply angular yaw deflection from off-center impact torque
+    if (Math.abs(this.deflectionYawRate) > 0.001) {
+      this.physicsRotationY += this.deflectionYawRate * dt;
+      this.physicsRotationY = ((this.physicsRotationY + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+      this.deflectionYawRate *= Math.exp(-4.0 * dt);
+      if (Math.abs(this.deflectionYawRate) < 0.005) {
+        this.deflectionYawRate = 0;
+      }
+    }
+
     // Vertical float (Y/pitch/roll) is owned by BoatBuoyancy — the physics
     // state rides at a stable base height so the collision probe and the
     // controller's XZ interpolation stay independent of the waves.
@@ -103,11 +138,56 @@ export class BoatController {
   }
 
   /** Apply the upgrade's driving and collision dimensions immediately. */
-  applyUpgrade({ speed, modelScale }) {
+  applyUpgrade({ level, speed, modelScale, mass }) {
+    this.level = level || this.level;
     this.maxSpeed = speed;
     this.inertia.maxSpeed = speed;
-    this.hullHalfLength = 2.0 * modelScale;
+    const scale = modelScale || 1.0;
+    this.hullHalfLength = (BoatConfig.COLLISION?.BASE_LENGTH || 4.0) * 0.5 * scale;
+    this.hullHalfWidth = (BoatConfig.COLLISION?.BASE_WIDTH || 2.0) * 0.5 * scale;
+    this.mass = mass || BoatConfig.COLLISION?.MASS_BY_LEVEL[(this.level || 1) - 1] || 1200;
     this.boat.userData.maxSpeed = speed;
+  }
+
+  /**
+   * Phase 3B: Apply server-authoritative collision correction or local collision response.
+   * @param {object} correction - { x, z, yaw, speed, deflectionVx, deflectionVz, yawDeflectionRate }
+   */
+  applyCollisionCorrection(correction) {
+    if (!correction) return;
+
+    if (typeof correction.x === 'number' && typeof correction.z === 'number') {
+      this.physicsPosition.x = correction.x;
+      this.physicsPosition.z = correction.z;
+      this.prevPosition.x = correction.x;
+      this.prevPosition.z = correction.z;
+      if (this.boat) {
+        this.boat.position.x = correction.x;
+        this.boat.position.z = correction.z;
+      }
+    }
+    if (typeof correction.yaw === 'number') {
+      this.physicsRotationY = correction.yaw;
+      this.prevRotationY = correction.yaw;
+      if (this.boat) {
+        this.boat.rotation.y = correction.yaw;
+      }
+    }
+    if (typeof correction.speed === 'number') {
+      this.speed = correction.speed;
+      this.inertia.speed = correction.speed;
+      // Kill positive throttle on impact so holding W doesn't immediately force boat through
+      if (this.inertia.throttle > 0) {
+        this.inertia.throttle = 0;
+      }
+    }
+    if (typeof correction.deflectionVx === 'number' && typeof correction.deflectionVz === 'number') {
+      this.deflectionVelocity.set(correction.deflectionVx, 0, correction.deflectionVz);
+    }
+    if (typeof correction.yawDeflectionRate === 'number') {
+      this.deflectionYawRate = correction.yawDeflectionRate;
+    }
+    this.collisionCooldown = Date.now() + 250;
   }
 
   /**

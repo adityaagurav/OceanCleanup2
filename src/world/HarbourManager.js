@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AssetManager } from '../engine/AssetManager.js';
 import { UnloadZone } from './UnloadZone.js';
+import { LeaderboardBoard } from './LeaderboardBoard.js';
 
 /**
  * HarbourManager.js — The harbour's compact U-shaped starting hub.
@@ -215,6 +216,21 @@ export class HarbourManager {
     // clear). Walkable pad registers with the character ground colliders.
     this.unloadZone = new UnloadZone(this.root, this._mat, this._geo, this.wallColliders);
     this.colliders.push(...this.unloadZone.walkableColliders);
+
+    // PART 7 — physical recycling leaderboard kiosk on the rear platform,
+    // beside the pier entrance where every player walks past on their way
+    // out (or back). Content is event-driven via updateLeaderboard().
+    this.leaderboard = new LeaderboardBoard(this.root, this.wallColliders);
+  }
+
+  /**
+   * Apply a live leaderboard broadcast to the physical board (Top 5 + the
+   * local player's own ranking). Cheap no-op when the data is unchanged.
+   * @param {Array<{rank:number,playerId:string,username:string,points:number}>} entries
+   * @param {string|null} localPlayerId
+   */
+  updateLeaderboard(entries, localPlayerId = null) {
+    this.leaderboard?.update(entries, localPlayerId);
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -1085,6 +1101,7 @@ export class HarbourManager {
 
   dispose() {
     this.unloadZone?.dispose();
+    this.leaderboard?.dispose();
     this.scene.remove(this.root);
   }
 }

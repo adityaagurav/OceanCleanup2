@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { MultiplayerServer } from './multiplayerServer.js';
 
 /**
@@ -24,7 +25,11 @@ function getNetworkAddresses() {
 const PORT = Number(process.env.PORT) || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
 
-const server = new MultiplayerServer({ port: PORT, host: HOST });
+// Lifetime recycling points survive disconnects AND server restarts.
+const LEADERBOARD_FILE =
+  process.env.LEADERBOARD_FILE || fileURLToPath(new URL('./leaderboard-data.json', import.meta.url));
+
+const server = new MultiplayerServer({ port: PORT, host: HOST, leaderboardFile: LEADERBOARD_FILE });
 
 server
   .start()

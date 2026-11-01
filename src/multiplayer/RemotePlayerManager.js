@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { buildBoatModel } from '../player/BoatModelBuilder.js';
 import { ProceduralCharacter } from '../player/ProceduralCharacter.js';
+import { BoatConfig } from '../config/BoatConfig.js';
 
 /**
  * RemotePlayerManager.js — Multiplayer Boat Ownership & Lifecycle Manager
@@ -190,6 +191,9 @@ export class RemotePlayerManager {
       currentYaw: yaw,
       speed: initialPos.speed || 0,
       animState: initialPos.animState || 'Idle',
+      deflectionVx: 0,
+      deflectionVz: 0,
+      deflectionYawRate: 0,
       phaseOffset: Math.random() * Math.PI * 2,
     });
   }
@@ -261,7 +265,18 @@ export class RemotePlayerManager {
 
     const t = data.transform || data;
     if (typeof t.x === 'number' && typeof t.z === 'number') {
-      entry.targetPos.set(t.x, t.y ?? entry.targetPos.y, t.z);
+      const inCooldown = entry.collisionCooldown && Date.now() < entry.collisionCooldown;
+      if (inCooldown && entry.collisionPos) {
+        // Prevent stale in-flight packet from snapping remote boat back into collision
+        const distFromCollision = Math.hypot(t.x - entry.collisionPos.x, t.z - entry.collisionPos.z);
+        if (distFromCollision < 0.8) {
+          entry.targetPos.set(entry.collisionPos.x, t.y ?? entry.targetPos.y, entry.collisionPos.z);
+        } else {
+          entry.targetPos.set(t.x, t.y ?? entry.targetPos.y, t.z);
+        }
+      } else {
+        entry.targetPos.set(t.x, t.y ?? entry.targetPos.y, t.z);
+      }
     }
     if (typeof t.yaw === 'number') {
       entry.targetYaw = t.yaw;
@@ -329,6 +344,77 @@ export class RemotePlayerManager {
     console.log(
       `[RemotePlayerManager] Remote player "${entry.player.username}" state: ${oldState} -> ${newState} | Boat visible: ${isSailing} | Char visible: ${!isSailing}`
     );
+  }
+
+  /**
+   * Phase 3B: Handle boat-to-boat collision update from server or local physics.
+   * Updates remote boat's target position, deflection velocity, and speed.
+   * @param {object} data - { boatA, boatB, normal, depth, impulse }
+   */
+  handleBoatCollision(data) {
+    if (!data) return;
+
+    const processBoat = (b) => {
+      if (!b || !b.playerId) return;
+      if (this._isLocalPlayer({ playerId: b.playerId })) return;
+
+      const entry = this.remoteEntities.get(b.playerId);
+      if (!entry) return;
+
+      if (typeof b.x === 'number' && typeof b.z === 'number') {
+        entry.targetPos.set(b.x, entry.targetPos.y, b.z);
+        // Immediately separate to prevent persistent penetration
+        entry.currentPos.set(b.x, entry.currentPos.y, b.z);
+        if (entry.boatGroup) {
+          entry.boatGroup.position.x = b.x;
+          entry.boatGroup.position.z = b.z;
+        }
+        entry.collisionCooldown = Date.now() + 250;
+        entry.collisionPos = { x: b.x, z: b.z };
+      }
+      if (typeof b.yaw === 'number') {
+        entry.targetYaw = b.yaw;
+      }
+      if (typeof b.speed === 'number') {
+        entry.speed = b.speed;
+      }
+      if (typeof b.deflectionVx === 'number' && typeof b.deflectionVz === 'number') {
+        entry.deflectionVx = b.deflectionVx;
+        entry.deflectionVz = b.deflectionVz;
+      }
+      if (typeof b.yawDeflectionRate === 'number') {
+        entry.deflectionYawRate = b.yawDeflectionRate;
+      }
+    };
+
+    processBoat(data.boatA);
+    processBoat(data.boatB);
+  }
+
+  /**
+   * Phase 3B: Get all remote boats actively sailing in the ocean.
+   * Excludes docked or returning boats.
+   * @returns {Array<object>}
+   */
+  getActiveOceanBoats() {
+    const list = [];
+    for (const [playerId, entry] of this.remoteEntities.entries()) {
+      if (entry.state === 'ACTIVE' || entry.state === 'BOARDING') {
+        list.push({
+          id: playerId,
+          playerId,
+          x: entry.currentPos.x,
+          z: entry.currentPos.z,
+          yaw: entry.currentYaw,
+          speed: entry.speed,
+          level: entry.boatLevel || 1,
+          mass: entry.mass || (BoatConfig.COLLISION?.MASS_BY_LEVEL[(entry.boatLevel || 1) - 1] || 1200),
+          deflectionVx: entry.deflectionVx || 0,
+          deflectionVz: entry.deflectionVz || 0,
+        });
+      }
+    }
+    return list;
   }
 
   /**
@@ -416,6 +502,19 @@ export class RemotePlayerManager {
 
         if (state === 'ACTIVE' || state === 'BOARDING') {
           // ── Remote Boat Ocean Physics & Interpolation ──────────────────
+          // Integrate deflection push velocity if present
+          if (entry.deflectionVx || entry.deflectionVz) {
+            currentPos.x += entry.deflectionVx * fd;
+            currentPos.z += entry.deflectionVz * fd;
+            const drag = Math.exp(-(BoatConfig.COLLISION?.WATER_DRAG_DEFLECTION || 3.6) * fd);
+            entry.deflectionVx *= drag;
+            entry.deflectionVz *= drag;
+            if (Math.hypot(entry.deflectionVx, entry.deflectionVz) < 0.05) {
+              entry.deflectionVx = 0;
+              entry.deflectionVz = 0;
+            }
+          }
+
           currentPos.lerp(targetPos, Math.min(1, fd * 12));
           entry.currentYaw = lerpAngle(entry.currentYaw, entry.targetYaw, Math.min(1, fd * 12));
 
