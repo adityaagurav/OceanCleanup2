@@ -45,6 +45,8 @@ export class CharacterController {
 
     // ── Animation state ─────────────────────────────────────────────
     this.currentStateName = 'Idle';
+    this.enabled = true;
+    this.isFishing = false;
 
     // ── Raycaster ───────────────────────────────────────────────────
     this._raycaster = new THREE.Raycaster();
@@ -69,6 +71,27 @@ export class CharacterController {
     this.position.set(x, y, z);
     this.prevPosition.set(x, y, z);
     this.group.position.copy(this.position);
+    this._fishingLockPos = null;
+  }
+
+  setFishing(fishing) {
+    this.isFishing = !!fishing;
+    if (!this.isFishing) {
+      this._fishingLockPos = null;
+      if (this.currentStateName === 'Fish') {
+        this.currentStateName = 'Idle';
+      }
+    }
+  }
+
+  resetMovement() {
+    this.enabled = true;
+    this.isFishing = false;
+    this._fishingLockPos = null;
+    this.velocity.set(0, 0, 0);
+    if (this.currentStateName === 'Fish') {
+      this.currentStateName = 'Idle';
+    }
   }
 
   rebase(offset) {
@@ -98,9 +121,49 @@ export class CharacterController {
    * @param {number} dt  — fixed delta (1/60)
    */
   fixedUpdate(input, camCtrl, dt) {
+    if (!Number.isFinite(this.position.x) || !Number.isFinite(this.position.z)) {
+      this.position.set(0, 1.2, 0);
+      this.prevPosition.copy(this.position);
+      this.velocity.set(0, 0, 0);
+    }
+    if (!Number.isFinite(this.yaw)) {
+      this.yaw = 0;
+      this.prevYaw = 0;
+    }
+
     // Store previous physics state before integration
     this.prevPosition.copy(this.position);
     this.prevYaw = this.yaw;
+
+    if (this.enabled === false) {
+      this.velocity.set(0, 0, 0);
+      return;
+    }
+
+    if (this.isFishing) {
+      // Position is completely locked in place while fishing
+      if (!this._fishingLockPos) {
+        this._fishingLockPos = this.position.clone();
+      }
+      this.position.x = this._fishingLockPos.x;
+      this.position.z = this._fishingLockPos.z;
+      this.velocity.x = 0;
+      this.velocity.z = 0;
+
+      // Gravity and ground detection keep character anchored cleanly on dock
+      if (this.isGrounded) {
+        this.velocity.y = Math.max(this.velocity.y, 0);
+      } else {
+        this.velocity.y += GRAVITY * dt;
+      }
+      this.position.y += this.velocity.y * dt;
+      this.wasGrounded = this.isGrounded;
+      this._detectGround();
+      this.currentStateName = 'Fish';
+      return;
+    } else {
+      this._fishingLockPos = null;
+    }
 
     // ── 1. Camera-relative input direction (no charYaw dependency) ──
     const camForward = camCtrl.getCameraForward();
@@ -163,9 +226,9 @@ export class CharacterController {
     if (hasInput) {
       const targetYaw = Math.atan2(this._inputDir.x, this._inputDir.z);
       let diff = targetYaw - this.yaw;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff >  Math.PI) diff -= Math.PI * 2;
+      diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
       this.yaw += diff * Math.min(TURN_SPEED * dt, 1);
+      this.yaw = ((this.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
     }
 
     // ── 9. Resolve animation state ─────────────────────────────────
@@ -183,8 +246,7 @@ export class CharacterController {
       this.group.position.lerpVectors(this.prevPosition, this.position, alpha);
 
       let diff = this.yaw - this.prevYaw;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff >  Math.PI) diff -= Math.PI * 2;
+      diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
       this.group.rotation.y = this.prevYaw + diff * alpha;
     } else {
       // Fallback if called as renderUpdate(frameDelta, camCtrl)
@@ -228,9 +290,10 @@ export class CharacterController {
       const vel = axis === 'x' ? this.velocity.x : this.velocity.z;
       if (Math.abs(vel) < 0.01) return;
 
+      const sign = Math.sign(vel);
       const dir = axis === 'x'
-        ? new THREE.Vector3(Math.sign(vel), 0, 0)
-        : new THREE.Vector3(0, 0, Math.sign(vel));
+        ? new THREE.Vector3(sign, 0, 0)
+        : new THREE.Vector3(0, 0, sign);
       const travel = Math.abs(vel) * dt + radius;
 
       for (const h of probes) {
@@ -238,8 +301,17 @@ export class CharacterController {
         this._horizRay.set(origin, dir);
         const hits = this._horizRay.intersectObjects(this.wallColliders, false);
         if (hits.length > 0 && hits[0].distance < travel) {
-          // Blocked — cancel movement along this axis so the body slides
+          // Blocked — cancel movement along this axis so the body slides cleanly
           if (axis === 'x') this.velocity.x = 0; else this.velocity.z = 0;
+          // Depenetrate if character is closer than boundary radius
+          const penetration = radius - hits[0].distance;
+          if (penetration > 0.001) {
+            if (axis === 'x') {
+              this.position.x -= sign * penetration;
+            } else {
+              this.position.z -= sign * penetration;
+            }
+          }
           return;
         }
       }

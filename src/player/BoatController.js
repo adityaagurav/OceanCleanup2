@@ -38,6 +38,7 @@ export class BoatController {
     this.accel    = 0; // signed acceleration (m/s²) — for buoyancy pitch
     this.maxSpeed = BoatConfig.MAX_SPEED;
     this.reverseSpeed = BoatConfig.REVERSE_SPEED;
+    this.hullHalfLength = 2.0;
 
     // Physics interpolation state
     this.physicsPosition = new THREE.Vector3();
@@ -67,12 +68,15 @@ export class BoatController {
     this.prevRotationY = this.physicsRotationY;
 
     // --- 1. Momentum (progressive throttle, water drag, steering inertia) ---
+    this.inertia.maxSpeed = this.maxSpeed;
     this.inertia.update(input, dt);
+
     this.speed    = this.inertia.speed;
     this.throttle = this.inertia.throttle;
     this.steer    = this.inertia.steer;
     this.accel    = this.inertia.accel;
     this.physicsRotationY += this.inertia.yawRate * dt;
+    this.physicsRotationY = ((this.physicsRotationY + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
 
     // --- 2. Apply movement ---
     // Move forward in the direction the boat is facing (local -Z).
@@ -98,6 +102,14 @@ export class BoatController {
     this.physicsPosition.y = 0;
   }
 
+  /** Apply the upgrade's driving and collision dimensions immediately. */
+  applyUpgrade({ speed, modelScale }) {
+    this.maxSpeed = speed;
+    this.inertia.maxSpeed = speed;
+    this.hullHalfLength = 2.0 * modelScale;
+    this.boat.userData.maxSpeed = speed;
+  }
+
   /**
    * Render update for visual interpolation (called every render frame)
    * @param {number} alpha - sub-frame interpolation factor
@@ -111,8 +123,7 @@ export class BoatController {
 
     // Interpolate rotation.y handling wrapping correctly
     let diff = this.physicsRotationY - this.prevRotationY;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff > Math.PI) diff -= Math.PI * 2;
+    diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
     this.boat.rotation.y = this.prevRotationY + diff * alpha;
   }
 
@@ -148,7 +159,7 @@ export class BoatController {
     origin.y = 0.3; // just above the bob range, at dock height
     this._ray.set(origin, dir);
     const hits = this._ray.intersectObjects(this.colliders, false);
-    const stopDistance = moveDist + 2.0; // boat half-length margin
+    const stopDistance = moveDist + this.hullHalfLength; // scale collision margin with upgraded hull
     return hits.length > 0 && hits[0].distance < stopDistance;
   }
 }

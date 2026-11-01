@@ -33,7 +33,7 @@ export const ProgressionConfig = {
   /** Total unloading feedback duration (s) — arcs + a short landing beat. */
   UNLOAD_ANIM_SECONDS: 1.3,
 
-  /** localStorage key for the basic local coin persistence. */
+  /** localStorage key used by the existing coin wallet. Boat levels are session-only. */
   _COINS_KEY: 'ocean_cleanup_coins',
 
   /** Load persisted coins (0 on first run / if storage unavailable). */
@@ -63,6 +63,7 @@ export const ProgressionConfig = {
   createSessionState: () => ({
     boatTrashCount: 0,
     deliveredTrashCount: 0,
+    boatLevel: 1,
     coins: ProgressionConfig.loadCoins(),
     // Reserved for Part 4 — no quest system exists yet, so it stays null and
     // nothing in the UI may render from it until it is real.

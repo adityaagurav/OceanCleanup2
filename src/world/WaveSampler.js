@@ -40,7 +40,7 @@ export class WaveSampler {
    * @param {number} time — shared wave clock (seconds)
    * @returns {number} height in metres (0 = static water level)
    */
-  getHeight(x, z, time) {
+  getHeight(x, z, time = 0) {
     const W = BoatConfig.WAVES;
     const f = W.FREQUENCY;
     const h = W.HEIGHT;
@@ -59,6 +59,17 @@ export class WaveSampler {
     // Harbour ↔ ocean blend: calm inside the harbour, full ocean outside.
     const mult = this._harborMult(x, z);
     return y * mult * W.STRENGTH;
+  }
+
+  /**
+   * Alias for getHeight for backward compatibility and convenience.
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [time=0]
+   * @returns {number} height in metres
+   */
+  sample(x, z, time = 0) {
+    return this.getHeight(x, z, time);
   }
 
   /**

@@ -111,7 +111,7 @@ export class BoatEffects {
   _updateWake(dt, boat, ctx) {
     const W = BoatConfig.WAKE;
     const speed = Math.abs(ctx.speed);
-    const speedFactor = Math.min(1, speed / BoatConfig.MAX_SPEED);
+    const speedFactor = Math.min(1, speed / (boat.userData.maxSpeed || BoatConfig.MAX_SPEED));
 
     if (speed < W.THRESHOLD) {
       if (this._wakeMesh.visible) {
@@ -235,7 +235,7 @@ export class BoatEffects {
     const p = this._pool;
     const EF = BoatConfig.EFFECTS;
     const speed = Math.abs(ctx.speed);
-    const speedFactor = Math.min(1, speed / BoatConfig.MAX_SPEED);
+    const speedFactor = Math.min(1, speed / (boat.userData.maxSpeed || BoatConfig.MAX_SPEED));
 
     // ── Emissions ────────────────────────────────────────────────
     // Propeller bubbles/foam: intensity from throttle (and a little from speed).

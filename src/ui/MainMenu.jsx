@@ -2,6 +2,7 @@ import React from 'react';
 import GameButton from '../components/GameButton';
 import Icon from '../components/Icon';
 import HeroScene from '../landing/HeroScene';
+import { MultiplayerStatusChip } from './MultiplayerStatusChip.jsx';
 
 /**
  * MainMenu.jsx — The game's front door.
@@ -16,7 +17,7 @@ import HeroScene from '../landing/HeroScene';
 // Real numbers from the game's config — rendered, never invented.
 // (Trash densities come from WorldConfig: 250 / 400 / 600 by setting.)
 
-function Nav({ onNavigate, soundMuted, onToggleSound }) {
+function Nav({ onNavigate, soundMuted, onToggleSound, networkState, onReconnectMultiplayer }) {
   return (
     <nav
       aria-label="Main menu"
@@ -43,6 +44,10 @@ function Nav({ onNavigate, soundMuted, onToggleSound }) {
 
       {/* Links */}
       <div className="flex items-center gap-1.5 sm:gap-2">
+        <MultiplayerStatusChip
+          networkState={networkState}
+          onReconnect={onReconnectMultiplayer}
+        />
         <GameButton text="How to Play" icon="book" variant="ghost" size="auto"
           className="hidden md:flex py-2! px-4! text-sm" onClick={() => onNavigate('HOW_TO_PLAY')} />
         <GameButton text="Settings" icon="sliders" variant="ghost" size="auto"
@@ -65,7 +70,46 @@ function Nav({ onNavigate, soundMuted, onToggleSound }) {
   );
 }
 
-function Hero({ onNavigate }) {
+function Hero({ onNavigate, soundMuted, onToggleSound, networkState, onReconnectMultiplayer, onStartGame }) {
+  const [customName, setCustomName] = React.useState(() => {
+    return networkState?.username || networkState?.tempUsername || (typeof localStorage !== 'undefined' ? localStorage.getItem('ocean_cleanup_username') : '') || '';
+  });
+
+  React.useEffect(() => {
+    if (!customName && (networkState?.username || networkState?.tempUsername)) {
+      setCustomName(networkState.username || networkState.tempUsername);
+    }
+  }, [networkState?.username, networkState?.tempUsername]);
+
+  const handleRandomizeName = () => {
+    const adjectives = ['Eco', 'Swift', 'Ocean', 'Tidal', 'Coral', 'Solar', 'Aqua', 'Wave', 'Brave', 'Clean'];
+    const nouns = ['Sailor', 'Captain', 'Skipper', 'Navigator', 'Ranger', 'Voyager', 'Pilot', 'Keeper', 'Hero', 'Rover'];
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const num = Math.floor(100 + Math.random() * 900);
+    setCustomName(`${adj}${noun}${num}`);
+  };
+
+  const handlePlay = () => {
+    if (typeof document !== 'undefined' && document.activeElement?.blur) {
+      document.activeElement.blur();
+    }
+    if (typeof window !== 'undefined' && window.focus) {
+      window.focus();
+    }
+    const finalName = customName.trim() || networkState?.tempUsername || 'EcoSailor';
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('ocean_cleanup_username', finalName);
+      } catch (e) {}
+    }
+    if (onStartGame) {
+      onStartGame(finalName);
+    } else {
+      onNavigate('GAME');
+    }
+  };
+
   return (
     <section className="relative min-h-screen flex flex-col" aria-label="Welcome">
       {/* Lightweight 3D game world — the hero's backdrop */}
@@ -74,7 +118,13 @@ function Hero({ onNavigate }) {
       {/* Readability vignette behind the copy (left-weighted) */}
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(120%_120%_at_22%_30%,rgba(6,28,47,0.6)_0%,rgba(6,28,47,0.28)_45%,transparent_80%)]" />
 
-      <Nav onNavigate={onNavigate} />
+      <Nav
+        onNavigate={onNavigate}
+        soundMuted={soundMuted}
+        onToggleSound={onToggleSound}
+        networkState={networkState}
+        onReconnectMultiplayer={onReconnectMultiplayer}
+      />
 
       {/* Copy block */}
       <div className="relative z-10 flex-1 flex items-center px-6 sm:px-10 md:px-20 pt-24 pb-16">
@@ -96,10 +146,41 @@ function Hero({ onNavigate }) {
             and leave the water cleaner than you found it.
           </p>
 
+          {/* Phase 2: Guest username input */}
+          <div className="anim-hero-rise anim-rise-3 mt-7 max-w-sm w-full">
+            <label
+              htmlFor="guest-callsign"
+              className="text-foam/75 text-xs font-bold tracking-wide flex items-center justify-between mb-1.5"
+            >
+              <span>Captain's Call Sign</span>
+              <button
+                type="button"
+                onClick={handleRandomizeName}
+                title="Generate new guest name"
+                className="text-cyan-soft hover:text-aqua text-[0.72rem] font-bold cursor-pointer transition-colors"
+              >
+                🎲 Randomize
+              </button>
+            </label>
+            <div className="relative flex items-center">
+              <span className="absolute left-3.5 text-base pointer-events-none opacity-80">⛵</span>
+              <input
+                id="guest-callsign"
+                type="text"
+                maxLength={16}
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handlePlay()}
+                placeholder={networkState?.tempUsername || 'Enter call sign...'}
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-ink-deep/80 border border-cyan-soft/30 hover:border-cyan-soft/50 focus:border-aqua focus:outline-none focus:ring-2 focus:ring-aqua/30 text-foam placeholder-foam/30 text-sm font-semibold tracking-wide backdrop-blur-md transition-all shadow-inner"
+              />
+            </div>
+          </div>
+
           {/* CTA row */}
-          <div className="anim-hero-rise anim-rise-3 mt-9 flex flex-wrap items-center gap-4">
+          <div className="anim-hero-rise anim-rise-3 mt-5 flex flex-wrap items-center gap-4">
             <button
-              onClick={() => onNavigate('GAME')}
+              onClick={handlePlay}
               className="btn-ui focus-ring group flex items-center gap-3 px-9 py-4 rounded-2xl bg-ocean hover:bg-[#1799dc] text-white text-xl font-extrabold tracking-wide border border-white/30 shadow-[0_18px_44px_-16px_rgba(15,134,196,1)] cursor-pointer"
             >
               <span className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center transition-transform duration-150 group-hover:scale-110">
@@ -373,11 +454,18 @@ function Footer({ onNavigate }) {
   );
 }
 
-function MainMenu({ onNavigate, soundMuted, onToggleSound }) {
+function MainMenu({ onNavigate, soundMuted, onToggleSound, networkState, onReconnectMultiplayer, onStartGame }) {
   return (
     <div className="w-screen h-screen bg-[#04233b] overflow-hidden">
       <div className="h-full overflow-y-auto menu-scroll">
-        <Hero onNavigate={onNavigate} />
+        <Hero
+          onNavigate={onNavigate}
+          soundMuted={soundMuted}
+          onToggleSound={onToggleSound}
+          networkState={networkState}
+          onReconnectMultiplayer={onReconnectMultiplayer}
+          onStartGame={onStartGame}
+        />
         <InfoSection />
         <ShowcaseSection onNavigate={onNavigate} />
         <Footer onNavigate={onNavigate} />

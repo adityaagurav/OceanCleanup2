@@ -31,6 +31,7 @@ import { BoatConfig } from '../config/BoatConfig.js';
 export class BoatInertia {
   constructor() {
     this._cfg = BoatConfig.INERTIA;
+    this.maxSpeed = BoatConfig.MAX_SPEED;
 
     // Output state.
     this.speed    = 0; // m/s (signed — negative = reversing)
@@ -61,7 +62,7 @@ export class BoatInertia {
    */
   update(input, dt) {
     const I = this._cfg;
-    const MAX = BoatConfig.MAX_SPEED;
+    const MAX = this.maxSpeed;
     const REV = BoatConfig.REVERSE_SPEED;
 
     // ── 1. Progressive throttle ─────────────────────────────────
@@ -123,7 +124,7 @@ export class BoatInertia {
     // Only steer once the hull is moving (matches the original control rule).
     let steerInput = 0;
     if (Math.abs(this.speed) > 0.1) {
-      steerInput = (input.keys.right ? 1 : 0) - (input.keys.left ? 1 : 0);
+      steerInput = (input.keys.left ? 1 : 0) - (input.keys.right ? 1 : 0);
     }
     const kH = 1 - Math.exp(-I.HELM_RATE * dt);
     this.steer += (steerInput - this.steer) * kH;

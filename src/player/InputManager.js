@@ -16,6 +16,7 @@ export class InputManager {
       sprint:   false,  // Shift
       interact: false,  // F
       enter_vehicle: false, // E
+      reel: false,          // R (fishing retrieve)
     };
 
     // Mouse delta — accumulated between frames, consumed each frame
@@ -23,32 +24,39 @@ export class InputManager {
     this.mouseDeltaY = 0;
     this.scrollDelta = 0;
     this.isPointerLocked = false;
+    this._lastClientX = null;
+    this._lastClientY = null;
 
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp   = this._onKeyUp.bind(this);
     this._onMouseMove = this._onMouseMove.bind(this);
     this._onWheel = this._onWheel.bind(this);
     this._onPointerLockChange = this._onPointerLockChange.bind(this);
+    this._onBlur = this._onBlur.bind(this);
 
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup',   this._onKeyUp);
-    window.addEventListener('mousemove', this._onMouseMove);
-    window.addEventListener('wheel', this._onWheel, { passive: false });
-    document.addEventListener('pointerlockchange', this._onPointerLockChange);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', this._onKeyDown);
+      window.addEventListener('keyup',   this._onKeyUp);
+      window.addEventListener('mousemove', this._onMouseMove);
+      window.addEventListener('wheel', this._onWheel, { passive: false });
+      window.addEventListener('blur', this._onBlur);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('pointerlockchange', this._onPointerLockChange);
+    }
   }
 
   _mapKey(code) {
     switch (code) {
       case 'KeyW': case 'ArrowUp':    return 'forward';
       case 'KeyS': case 'ArrowDown':  return 'backward';
-      case 'KeyA': return 'right';
-      case 'KeyD': return 'left';
-      case 'ArrowLeft': return 'left';
-      case 'ArrowRight': return 'right';
+      case 'KeyA': case 'ArrowLeft':  return 'left';
+      case 'KeyD': case 'ArrowRight': return 'right';
       case 'Space':                   return 'jump';
       case 'ShiftLeft': case 'ShiftRight': return 'sprint';
       case 'KeyF':                    return 'interact';
       case 'KeyE':                    return 'enter_vehicle';
+      case 'KeyR':                    return 'reel';
       default:                        return null;
     }
   }
@@ -56,6 +64,10 @@ export class InputManager {
   _onKeyDown(e) {
     const action = this._mapKey(e.code);
     if (action) {
+      // Don't prevent default for browser tools or if target is a text input
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+        return;
+      }
       e.preventDefault();
       this.keys[action] = true;
     }
@@ -67,9 +79,33 @@ export class InputManager {
   }
 
   _onMouseMove(e) {
-    if (!this.isPointerLocked) return;
-    this.mouseDeltaX += e.movementX || 0;
-    this.mouseDeltaY += e.movementY || 0;
+    let dx = 0;
+    let dy = 0;
+
+    if (this.isPointerLocked) {
+      dx = e.movementX || 0;
+      dy = e.movementY || 0;
+    } else {
+      const isDragging = (e.buttons & 1) !== 0 || (e.buttons & 2) !== 0;
+      if (!isDragging) {
+        this._lastClientX = e.clientX;
+        this._lastClientY = e.clientY;
+        return;
+      }
+      if (typeof e.movementX === 'number' && e.movementX !== 0) {
+        dx = e.movementX;
+        dy = e.movementY || 0;
+      } else if (this._lastClientX !== null && this._lastClientY !== null) {
+        dx = e.clientX - this._lastClientX;
+        dy = e.clientY - this._lastClientY;
+      }
+    }
+
+    this._lastClientX = e.clientX;
+    this._lastClientY = e.clientY;
+
+    if (Number.isFinite(dx)) this.mouseDeltaX += dx;
+    if (Number.isFinite(dy)) this.mouseDeltaY += dy;
   }
 
   _onWheel(e) {
@@ -79,6 +115,23 @@ export class InputManager {
 
   _onPointerLockChange() {
     this.isPointerLocked = !!document.pointerLockElement;
+    this._lastClientX = null;
+    this._lastClientY = null;
+  }
+
+  _onBlur() {
+    this.resetKeys();
+  }
+
+  resetKeys() {
+    for (const key of Object.keys(this.keys)) {
+      this.keys[key] = false;
+    }
+    this.mouseDeltaX = 0;
+    this.mouseDeltaY = 0;
+    this.scrollDelta = 0;
+    this._lastClientX = null;
+    this._lastClientY = null;
   }
 
   /**
@@ -103,10 +156,15 @@ export class InputManager {
   }
 
   destroy() {
-    window.removeEventListener('keydown', this._onKeyDown);
-    window.removeEventListener('keyup',   this._onKeyUp);
-    window.removeEventListener('mousemove', this._onMouseMove);
-    window.removeEventListener('wheel', this._onWheel);
-    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this._onKeyDown);
+      window.removeEventListener('keyup',   this._onKeyUp);
+      window.removeEventListener('mousemove', this._onMouseMove);
+      window.removeEventListener('wheel', this._onWheel);
+      window.removeEventListener('blur', this._onBlur);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    }
   }
 }

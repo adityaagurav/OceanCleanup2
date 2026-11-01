@@ -29,6 +29,8 @@ export class TrashSystem {
     //   boatTrashCount — collected aboard, NOT yet unloaded (no rewards here)
     //   worldTrash     — live count of items still floating (this.trashes.length)
     this.boatTrashCount = 0;
+    this.cargoCapacity = options.cargoCapacity ?? 5;
+    this.reservedCargo = 0;
 
     // Draw-call cull radius for updateVisibility(): trash beyond this distance
     // never enters the render list. Pickup radius is 8 m, so the default 600 m
@@ -136,7 +138,7 @@ export class TrashSystem {
    */
   updateFloating(dt, sampler, time, boatSpeed = 0, boat = null) {
     const TW = BoatConfig.TRASH_WAKE;
-    const speedFactor = Math.min(1, Math.abs(boatSpeed) / BoatConfig.MAX_SPEED);
+    const speedFactor = Math.min(1, Math.abs(boatSpeed) / (boat?.userData.maxSpeed || BoatConfig.MAX_SPEED));
     const radiusSq = TW.RADIUS * TW.RADIUS;
     const decay = Math.exp(-TW.DECAY * dt);
 
@@ -193,8 +195,9 @@ export class TrashSystem {
         const idx = this.trashes.indexOf(reel.trash);
         if (idx !== -1) this.trashes.splice(idx, 1);
         this.activeReels.splice(i, 1);
+        this.reservedCargo = Math.max(0, this.reservedCargo - 1);
 
-        this.boatTrashCount++;
+        this.boatTrashCount = Math.min(this.cargoCapacity, this.boatTrashCount + 1);
         this.callbacks.onCollect?.(this.boatTrashCount, this.worldTrash);
       } else {
         const cur = new THREE.Vector3().lerpVectors(reel.startPos, deckPos, reel.progress);
@@ -207,14 +210,33 @@ export class TrashSystem {
     }
   }
 
+  /** Update the active boat's cargo limit (progress is session-only). */
+  setCargoCapacity(capacity) {
+    this.cargoCapacity = Math.max(0, Math.floor(capacity));
+  }
+
+  /** Change the current cargo count and update UI/gameplay from one owner. */
+  setBoatTrashCount(count) {
+    this.boatTrashCount = Math.max(0, Math.min(this.cargoCapacity, Math.floor(count)));
+  }
+
+  /** Testable/gameplay predicate for whether another item can be reeled. */
+  hasCargoSpace() {
+    return this.boatTrashCount + this.reservedCargo < this.cargoCapacity;
+  }
+
   /**
    * Attempt to pick up the nearest trash item.
+   * Reservations include active reels so several quick pickups cannot exceed
+   * capacity before their animations finish.
    * @param {THREE.Vector3} playerPos
    * @param {THREE.Vector3} deckPos
+   * @returns {'capacity'|'distance'|'unavailable'|null}
    */
   pickupNearest(playerPos, deckPos) {
-    if (!this.nearItem || this.nearItem.isBeingReeled) return;
-    if (playerPos.distanceTo(this.nearItem.position) > WorldConfig.TRASH_PICKUP_RADIUS) return;
+    if (!this.hasCargoSpace()) return 'capacity';
+    if (!this.nearItem || this.nearItem.isBeingReeled) return 'unavailable';
+    if (playerPos.distanceTo(this.nearItem.position) > WorldConfig.TRASH_PICKUP_RADIUS) return 'distance';
 
     const target = this.nearItem;
     target.isBeingReeled = true;
@@ -224,10 +246,12 @@ export class TrashSystem {
     this.scene.add(line);
 
     this.activeReels.push({ trash: target, line, progress: 0, startPos: target.position.clone() });
+    this.reservedCargo++;
 
     this._ring.visible = false;
     this.nearItem = null;
     this.callbacks.onNearTrash?.(false);
+    return null;
   }
 
   /** Live count of trash still floating in the world (ProgressionConfig.worldTrash). */

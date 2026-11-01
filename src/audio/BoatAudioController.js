@@ -55,7 +55,7 @@ export class BoatAudioController {
 
     const speed = Math.abs(state.speed || 0);
     const throttle = Math.max(0, state.throttle || 0);
-    const speedFactor = Math.min(1, speed / BoatConfig.MAX_SPEED);
+    const speedFactor = Math.min(1, speed / (state.maxSpeed ?? BoatConfig.MAX_SPEED));
     const hf = Math.max(0, Math.min(1, state.harborFactor ?? 1));
     const inBoat = !!state.inBoat;
 

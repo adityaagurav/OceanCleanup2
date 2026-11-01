@@ -53,6 +53,21 @@ export class BoatBuoyancy {
     this._markers = null;
   }
 
+  /** Resize the float footprint to follow an upgraded hull. */
+  applyBoatScale(modelScale) {
+    const B = BoatConfig.BUOYANCY;
+    const scale = modelScale || 1;
+    this._boatScale = scale;
+    this._points = [
+      { x: -B.FLOAT_HALF_X * scale, z: B.FLOAT_FRONT * scale },
+      { x:  B.FLOAT_HALF_X * scale, z: B.FLOAT_FRONT * scale },
+      { x: -B.FLOAT_HALF_X * scale, z: B.FLOAT_BACK * scale },
+      { x:  B.FLOAT_HALF_X * scale, z: B.FLOAT_BACK * scale },
+    ];
+    this._hullLen = (B.FLOAT_BACK - B.FLOAT_FRONT) * scale;
+    this._hullWid = B.FLOAT_HALF_X * 2 * scale;
+  }
+
   /**
    * Drive the boat's float every render frame.
    * @param {number} dt - frame delta (s)
@@ -64,6 +79,7 @@ export class BoatBuoyancy {
     const L = BoatConfig.LEAN;
 
     if (this._curY === null) this._curY = boat.position.y;
+    const hullScale = this._boatScale || 1;
 
     // ── 1. Sample the wave field under the four float points ─────
     const yaw = boat.rotation.y;
@@ -88,10 +104,11 @@ export class BoatBuoyancy {
     // ── 2. Wave targets: Y, pitch (front/back), roll (left/right) ─
     // The hull reacts MORE to waves at speed and sits calm at idle.
     const speed = Math.abs(ctx.speed);
-    const speedFactor = Math.min(1, speed / BoatConfig.MAX_SPEED);
+    const speedFactor = Math.min(1, speed / (boat.userData.maxSpeed || BoatConfig.MAX_SPEED));
     const waveScale = 1 + speedFactor * B.SPEED_WAVE_BOOST;
+    const draft = B.DRAFT * hullScale;
 
-    let targetY     = avg + B.DRAFT;
+    let targetY     = avg + draft;
     let targetPitch = Math.atan2(front - back, this._hullLen) * waveScale;
     let targetRoll  = Math.atan2(right - left, this._hullWid)  * waveScale;
 
@@ -112,7 +129,8 @@ export class BoatBuoyancy {
     targetPitch += accelClamped * L.PITCH_PER_ACCEL;
 
     // ── 5. Turning lean — roll into the turn, max 5° ─────────────
-    const leanFade = Math.max(0, Math.min(1, (speed - L.LEAN_MIN_SPEED) / (BoatConfig.MAX_SPEED - L.LEAN_MIN_SPEED)));
+    const maxSpeed = boat.userData.maxSpeed || BoatConfig.MAX_SPEED;
+    const leanFade = Math.max(0, Math.min(1, (speed - L.LEAN_MIN_SPEED) / (maxSpeed - L.LEAN_MIN_SPEED)));
     const lean = -ctx.steer * this._maxLean * leanFade;
     targetRoll += lean;
 

@@ -10,9 +10,20 @@
  */
 export const BoatConfig = {
   // ── Top speed / reverse (shared by every system) ──────────────
-  MAX_SPEED:     8.0,  // m/s (~18 knots)
+  MAX_SPEED:     8.0,  // Level 1 top speed in m/s (~18 knots)
   REVERSE_SPEED: 3.0,  // m/s
   TURN_SPEED:    1.7,  // rad/s of yaw rate at max speed (slower = heavier hull)
+
+  // Session-only boat progression. Costs are charged when upgrading TO a level.
+  LEVELS: [
+    { level: 1, name: 'Starter', appearance: 'Starter sailboat', capacity: 5,  cost: 0,  speed: 8.0, modelScale: 1.0 },
+    { level: 2, name: 'Improved', appearance: 'Expanded working sailboat', capacity: 10, cost: 20, speed: 9.5, modelScale: 1.18 },
+    { level: 3, name: 'Advanced', appearance: 'Advanced cleanup cruiser', capacity: 15, cost: 50, speed: 11.0, modelScale: 1.38 },
+  ],
+
+  // Proximity distance (in meters) for boat interactions at the harbor (upgrades / boarding)
+  INTERACTION_DISTANCE: 6.0,
+
 
   // ── Momentum & inertia (BoatInertia) ──────────────────────────
   // The "heavy" layer: throttle is a smooth progressive ramp (never a hard

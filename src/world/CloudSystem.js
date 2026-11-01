@@ -30,32 +30,32 @@ import { mergeBufferGeometries } from 'three/examples/jsm/utils/BufferGeometryUt
 
 const CLOUD_COUNT = 100;                // total clouds in the ring (was 30)
 const DISC_RADIUS = 1300;               // ring radius around the camera (m) (was 1700)
-const ALT_MIN     = 260;                // cloud base altitude (m)
-const ALT_MAX     = 440;
-const WIND_MIN    = 1.5;                // drift speed (m/s)
-const WIND_MAX    = 4.5;
+const ALT_MIN = 260;                // cloud base altitude (m)
+const ALT_MAX = 440;
+const WIND_MIN = 1.5;                // drift speed (m/s)
+const WIND_MAX = 4.5;
 const WIND_SPREAD = 0.55;               // ±radians each cloud's wind can diverge from +X
 // Each cluster geometry is ~5 world units wide, so an instance scale of 13–36
 // renders clouds ~65–180 m across — big enough to read as clouds from a
 // sea-level camera at 260–440 m altitude (the world is in metres; the player
 // is ~1.75 m tall).
-const SCALE_MIN   = 13;
-const SCALE_MAX   = 36;
+const SCALE_MIN = 13;
+const SCALE_MAX = 36;
 
 // Shader morph: displacement = (d1*0.10 + d2*0.05) * MORPH_AMP * normal, where
 // d1/d2 are animated simplex-noise samples in [-1, 1]. Pre-scale that is up to
 // ~0.3 world units; multiplied by instance scale 13–36 → 4–11 m of billow on a
 // 65–180 m cloud — clearly visible churn without the cloud looking wobbly.
-const MORPH_AMP   = 2.4;                // billow strength
+const MORPH_AMP = 2.4;                // billow strength
 const MORPH_SPEED = 0.15;               // how fast the billow evolves (s⁻¹)
 
-const DAY_COLOR   = new THREE.Color(0xffffff);
+const DAY_COLOR = new THREE.Color(0xffffff);
 const NIGHT_COLOR = new THREE.Color(0x141d2b); // matches the night fog palette
 
 // Vertex-colour ramp: white crowns → soft blue-grey underbellies (cumulus
 // look). The underbelly stays fairly light so the crevices between puffs read
 // as gentle shading instead of dark speckles when the sun is high.
-const TOP_COLOR    = new THREE.Color(1.0, 1.0, 1.0);
+const TOP_COLOR = new THREE.Color(1.0, 1.0, 1.0);
 const BOTTOM_COLOR = new THREE.Color(0.87, 0.89, 0.95);
 
 // 3D simplex noise (Ashima Arts / Gustavson) — compact GLSL used by the morph.
@@ -107,8 +107,8 @@ const NOISE_GLSL = `
 
 export class CloudSystem {
   constructor(scene) {
-    this.scene  = scene;
-    this.group  = new THREE.Group();
+    this.scene = scene;
+    this.group = new THREE.Group();
     this.group.name = 'Clouds';
     this._cloudTime = 0; // accumulates real seconds for the billow shader
 
@@ -129,7 +129,7 @@ export class CloudSystem {
     // that scrolls over time. Per-instance aPhase keeps every cloud out of sync.
     this.material.onBeforeCompile = (shader) => {
       shader.uniforms.uCloudTime = { value: this._cloudTime };
-      shader.uniforms.uCloudAmp  = { value: MORPH_AMP };
+      shader.uniforms.uCloudAmp = { value: MORPH_AMP };
       this.material.userData.shader = shader; // so update() can advance uCloudTime
       shader.vertexShader = shader.vertexShader
         .replace(
@@ -161,7 +161,7 @@ export class CloudSystem {
     // a little per-cloud spread so the whole bank isn't a rigid conveyor).
     this._data = [];
     for (let i = 0; i < CLOUD_COUNT; i++) {
-      const angle  = Math.random() * Math.PI * 2;
+      const angle = Math.random() * Math.PI * 2;
       const radius = Math.sqrt(Math.random()) * DISC_RADIUS; // uniform area fill
       this._data.push({
         x: Math.cos(angle) * radius,

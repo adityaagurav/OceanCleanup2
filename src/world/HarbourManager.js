@@ -626,26 +626,26 @@ export class HarbourManager {
     lCoil.position.set(-21.6, 1.245, 18.2);
     this.root.add(lCoil);
 
-    // Far cluster: container + standing barrel + rolled net + life ring
-    // (pulled back inside the shorter 27 m arm).
+    // Outer edge cluster (z ~15): container + standing barrel + rolled net + life ring
+    // placed against the outer boundary so the fishing platform (z 22..27) stays clear.
     const lCont = new THREE.Mesh(g.container, m.container);
-    lCont.position.set(-19.6, 1.425, 25.5);
+    lCont.position.set(-23.6, 1.425, 15.5);
     lCont.rotation.y = 0.4;
     lCont.castShadow = true;
     this.root.add(lCont);
     this.wallColliders.push(lCont);
     const lBarrel2 = new THREE.Mesh(g.barrel, m.barrel);
-    lBarrel2.position.set(-21.8, 1.675, 26.5);
+    lBarrel2.position.set(-23.8, 1.675, 16.5);
     lBarrel2.castShadow = true;
     this.root.add(lBarrel2);
     this.wallColliders.push(lBarrel2);
     const lNet = new THREE.Mesh(g.net, m.net);
     lNet.rotation.z = Math.PI / 2;
-    lNet.position.set(-23.2, 1.48, 24.6);
+    lNet.position.set(-23.2, 1.48, 14.6);
     this.root.add(lNet);
     const lRing = new THREE.Mesh(g.ring, m.ring);
     lRing.rotation.x = Math.PI / 2;
-    lRing.position.set(-18.4, 1.275, 26.2);
+    lRing.position.set(-24.2, 1.275, 17.2);
     this.root.add(lRing);
 
     // ── RIGHT arm — similar but NOT identical clusters ───────────────────
@@ -663,18 +663,18 @@ export class HarbourManager {
     rNet.position.set(19.8, 1.48, 21.2);
     this.root.add(rNet);
 
-    // Far cluster: 3-high crate stack + rope coil (the left has a container
-    // + barrel + net + ring here) — pulled back inside the shorter arm.
+    // Outer edge cluster (z ~15): 3-high crate stack + rope coil against outer boundary.
+    // Fishing platform (z 22..27) stays completely clear so player never gets trapped.
     for (const y of [1.6, 2.4, 3.2]) {
       const c = new THREE.Mesh(g.crate, m.deck);
-      c.position.set(21.6, y, 25);
+      c.position.set(23.8, y, 15.5);
       c.castShadow = true;
       this.root.add(c);
       this.wallColliders.push(c);
     }
     const rCoil = new THREE.Mesh(g.coil, m.rope);
     rCoil.rotation.x = Math.PI / 2;
-    rCoil.position.set(19.9, 1.245, 26.5);
+    rCoil.position.set(23.5, 1.245, 16.8);
     this.root.add(rCoil);
 
     // ── Outer-perimeter rocks: grounded boulders along the wings' outer
@@ -802,13 +802,12 @@ export class HarbourManager {
       this._placePalm(x, z, 2.4 + Math.random() * 0.4, 1.2);
     }
 
-    // ── Perimeter palms at the arms' tips (moved from the old 40 m tips to
-    //    the new 27 m squared-off ends — the old spots now sit in open water
-    //    / the channel mouth). Never in the channel; keeps the tips' inner
-    //    faces clear for future docking.
+    // ── Perimeter palms at the arms' outer corners & inner transitions
+    //    Hugs the boundaries so the central fishing platforms (x ±21, z 22..27)
+    //    stay completely open and unobstructed.
     const palms = [
-      [-22.5, 25.5, 2.6, 1.2], [-17.8, 25.6, 2.2, 1.2],
-      [22.5, 25.5, 2.6, 1.2], [17.8, 25.6, 2.2, 1.2],
+      [-24.2, 25.5, 2.6, 1.2], [-17.4, 23.5, 2.2, 1.2],
+      [24.2, 25.5, 2.6, 1.2], [17.4, 23.5, 2.2, 1.2],
     ];
     for (const [x, z, s, y] of palms) {
       this._placePalm(x, z, s, y);

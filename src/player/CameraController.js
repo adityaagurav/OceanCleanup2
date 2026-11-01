@@ -59,7 +59,20 @@ export class CameraController {
     this._fov     = GraphicsConfig.FOV;
     this._tmpV    = new THREE.Vector3();
 
-    this.domElement.addEventListener('click', () => this.domElement.requestPointerLock());
+    this._onClick = () => {
+      this.requestLock();
+    };
+    if (this.domElement) {
+      this.domElement.addEventListener('click', this._onClick);
+    }
+  }
+
+  /** Request pointer lock with safe error handling */
+  requestLock() {
+    try {
+      const p = this.domElement?.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) {}
   }
 
   /**
@@ -76,21 +89,25 @@ export class CameraController {
    *   identical (and eases any leftover boat roll back to zero).
    */
   update(charPosition, _charYaw, input, frameDelta, boatFeel = null) {
-    if (!charPosition) return;
+    if (!charPosition || !Number.isFinite(charPosition.x) || !Number.isFinite(charPosition.z)) return;
 
     // ── 1. Mouse input: adjust ABSOLUTE camera yaw/elevation ────────
     const mouse = input.consumeMouseDelta();
 
-    if (input.isPointerLocked) {
-      // Mouse right (+dx) → orbit camera clockwise → camYaw decreases
-      this._camYaw   -= mouse.dx * MOUSE_SENSITIVITY;
-      this._elevation += mouse.dy * MOUSE_SENSITIVITY;
-      this._elevation  = Math.max(MIN_ELEVATION, Math.min(MAX_ELEVATION, this._elevation));
+    if (Number.isFinite(mouse.dx) && Number.isFinite(mouse.dy)) {
+      if (mouse.dx !== 0 || mouse.dy !== 0) {
+        // Mouse right (+dx) → orbit camera clockwise → camYaw decreases
+        this._camYaw   -= mouse.dx * MOUSE_SENSITIVITY;
+        this._elevation += mouse.dy * MOUSE_SENSITIVITY;
+        this._elevation  = Math.max(MIN_ELEVATION, Math.min(MAX_ELEVATION, this._elevation));
+      }
     }
 
     // Scroll zoom
-    this._distance += mouse.scroll * ZOOM_SENSITIVITY;
-    this._distance  = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, this._distance));
+    if (Number.isFinite(mouse.scroll) && mouse.scroll !== 0) {
+      this._distance += mouse.scroll * ZOOM_SENSITIVITY;
+      this._distance  = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, this._distance));
+    }
 
     // ── 1b. Boat feel: yaw trail — while the hull turns, drift the camera's
     //         orbit angle toward the boat's heading (partially + slowly), so
@@ -99,11 +116,16 @@ export class CameraController {
     //         adjusts _camYaw first, so it always wins when the player looks.
     if (boatFeel && boatFeel.yaw != null) {
       let diff = boatFeel.yaw - this._camYaw;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const ky = 1 - Math.exp(-BoatConfig.CAMERA.YAW_LAG_RESPONSE * frameDelta);
+      diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+      const ky = 1 - Math.exp(-BoatConfig.CAMERA.YAW_LAG_RESPONSE * Math.min(frameDelta, 0.1));
       this._camYaw += diff * ky * BoatConfig.CAMERA.YAW_LAG_AMOUNT;
     }
+
+    // Normalize camYaw and guard against NaN
+    this._camYaw = ((this._camYaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    if (!Number.isFinite(this._camYaw)) this._camYaw = Math.PI;
+    if (!Number.isFinite(this._elevation)) this._elevation = DEFAULT_ELEVATION;
+    if (!Number.isFinite(this._distance)) this._distance = DEFAULT_DISTANCE;
 
     // ── 2. Compute ideal camera position ────────────────────────────
     const cosE = Math.cos(this._elevation);
@@ -137,8 +159,16 @@ export class CameraController {
     // Boat mode adds a tiny extra lag so the camera feels attached to a heavy
     // hull instead of glued to it.
     const lag = boatFeel?.delay ?? 1;
-    const t = 1 - Math.exp(-SPRING_FACTOR * lag * frameDelta);
-    this._springPos.lerp(idealPos, t);
+    const safeDelta = Math.min(Math.max(frameDelta, 0), 0.1);
+    const t = 1 - Math.exp(-SPRING_FACTOR * lag * safeDelta);
+    if (Number.isFinite(t) && t > 0) {
+      this._springPos.lerp(idealPos, t);
+    } else {
+      this._springPos.copy(idealPos);
+    }
+    if (!Number.isFinite(this._springPos.x)) {
+      this._springPos.copy(idealPos);
+    }
 
     this.camera.position.copy(this._springPos);
     this.camera.lookAt(lookAt);
@@ -207,16 +237,14 @@ export class CameraController {
   /**
    * Returns camera right (perpendicular to forward in XZ plane).
    * Used by CharacterController for A/D strafing.
+   * Right = Forward x Up = (-sin, 0, -cos) x (0, 1, 0) = (cos, 0, -sin).
    * @returns {THREE.Vector3} normalized, Y = 0
    */
   getCameraRight() {
-    // Right = forward rotated 90° clockwise in XZ
-    //   forward = (-sin, 0, -cos)
-    //   right   = (-cos, 0,  sin)  [rotate 90° CW]
     return new THREE.Vector3(
-      -Math.cos(this._camYaw),
+      Math.cos(this._camYaw),
       0,
-       Math.sin(this._camYaw),
+      -Math.sin(this._camYaw),
     ).normalize();
   }
 }

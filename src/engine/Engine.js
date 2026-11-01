@@ -37,6 +37,10 @@ import { PerformanceConfig }   from '../config/PerformanceConfig.js';
 import { ProgressionConfig }   from '../config/ProgressionConfig.js';
 import { BoatConfig }          from '../config/BoatConfig.js';
 import { BoatAudioController } from '../audio/BoatAudioController.js';
+import { FishingSystem }       from '../world/FishingSystem.js';
+import { RemotePlayerManager } from '../multiplayer/RemotePlayerManager.js';
+import { buildBoatModel }     from '../player/BoatModelBuilder.js';
+import { networkManager }      from '../multiplayer/NetworkManager.js';
 
 export class Engine {
   constructor(container, callbacks = {}, options = {}) {
@@ -49,6 +53,7 @@ export class Engine {
     // Harbor/boat related
     this.dock = null;
     this.boat = null;
+    this.boatLevel = 1;
     this.dockTrigger = null;
     this.boatController = null;
     this.harbour = null;
@@ -61,6 +66,9 @@ export class Engine {
     this.canLeaveBoat = false; // docked at the pier — press E to leave the boat
     this._nightPushed  = false; // last night state pushed to the UI
     this._lastCompass  = null;  // last compass packet pushed to the UI (throttle)
+    this.fishing = null;       // FishingSystem — initialized when harbour + boat are ready
+    this.remotePlayers = null; // RemotePlayerManager — Phase 2 multiplayer 3D boats
+    this._netTimer = 0;        // 20 Hz network broadcast timer
 
     this.wallColliders = []; // solid props/buildings — character horizontal blocking
 
@@ -193,6 +201,7 @@ export class Engine {
       onNearTrash:  (isNear) => this.callbacks.onNearTrash?.(isNear),
     }, {
       ...this.options,
+      cargoCapacity: BoatConfig.LEVELS[0].capacity,
       cullRadius: PerformanceConfig.TRASH_CULL_RADIUS,
     });
     this.trash.start();
@@ -201,18 +210,28 @@ export class Engine {
   _initEventListeners() {
     this._onResize  = this._onResize.bind(this);
     this._onKeyDown = (e) => {
+      if (e.repeat) return; // Prevent OS key-repeat from triggering action loops
       // Pick up the nearest trash while in the harbour (on foot) or at sea (on boat)
       if (e.code === 'KeyF' && (GameState.is('HARBOR') || GameState.is('BOAT'))) {
+        // If actively fishing, F stops fishing instead of picking up trash
+        if (this.fishing && this.fishing.state !== 'idle' && !this.fishing._justStartedFishing) {
+          this.stopFishing();
+          if (this.fishing) this.fishing._mustReleaseFBeforeCast = true;
+          return;
+        }
         const isHarbor = GameState.is('HARBOR');
         const entityPos = isHarbor ? this.character.getPosition() : this.boat.position;
         const deckPos = isHarbor
           ? this.character.getDeckPosition()
           : this.boat.position.clone().add(new THREE.Vector3(0, 1.2, 0)); // boat deck
-        this.trash.pickupNearest(entityPos, deckPos);
+        const pickupStatus = this.trash.pickupNearest(entityPos, deckPos);
+        if (pickupStatus === 'capacity') {
+          this.callbacks.onPickupBlocked?.('Cargo hold full');
+        }
       }
 
       // One button for all boat interactions:
-      //  - HARBOR: board when standing next to the boat
+      //  - HARBOR: press E when next to boat to open/close Upgrade Boat panel
       //  - BOAT:   leave when docked back at the pier, or unload at the
       //            recycling zone (requires trash aboard — Part 3 makes it
       //            actually move the trash; today it logs for dev testing)
@@ -220,7 +239,9 @@ export class Engine {
         if (GameState.is('HARBOR')) {
           if (this.boat && this.dockTrigger) {
             const distance = this.character.getPosition().distanceTo(this.boat.position);
-            if (distance < 6) this._boardBoat();
+            if (distance < (BoatConfig.INTERACTION_DISTANCE || 6)) {
+              this.callbacks.onToggleUpgrade?.();
+            }
           }
         } else if (GameState.is('BOAT')) {
           if (this.canLeaveBoat) {
@@ -228,6 +249,27 @@ export class Engine {
           } else {
             this._tryUnload();
           }
+        }
+      }
+
+      // Enter or B to board the boat while standing next to it at the harbor
+      if ((e.code === 'Enter' || e.code === 'KeyB') && GameState.is('HARBOR')) {
+        if (this.boat && this.dockTrigger) {
+          const distance = this.character.getPosition().distanceTo(this.boat.position);
+          if (distance < (BoatConfig.INTERACTION_DISTANCE || 6)) {
+            this._boardBoat();
+          }
+        }
+      }
+
+      // Escape closes open upgrade panel at the harbor, or stops active fishing
+      if (e.code === 'Escape') {
+        if (this.fishing && this.fishing.state !== 'idle') {
+          this.stopFishing();
+          return;
+        }
+        if (GameState.is('HARBOR')) {
+          this.callbacks.onCloseUpgrade?.();
         }
       }
     };
@@ -416,10 +458,10 @@ export class Engine {
     if (GameState.is('HARBOR')) {
       this.character.fixedUpdate(this.input, this.camera_ctrl, dt);
       this.trash.updateProximity(this.character.getPosition());
-      // Update near boat status for docking prompt
+      // Update near boat status for upgrade/docking prompt
       if (this.boat) {
         const distanceToBoat = this.character.getPosition().distanceTo(this.boat.position);
-        this.isNearBoat = distanceToBoat < 6;
+        this.isNearBoat = distanceToBoat < (BoatConfig.INTERACTION_DISTANCE || 6);
       } else {
         this.isNearBoat = false;
       }
@@ -427,11 +469,19 @@ export class Engine {
         this._wasNearBoat = this.isNearBoat;
         this.callbacks.onNearBoat?.(this.isNearBoat);
       }
+      // Fishing system update in HARBOR mode (character on foot at harbor arm endpoints)
+      if (this.fishing && this.character) {
+        this.fishing.update(dt, this.input, this.character.group, this.character, false);
+      }
       // NOTE: moored rocking is now driven by BoatBuoyancy in _render, so the
       // boat floats on the same wave field whether moored or at sea.
     } else if (GameState.is('BOAT')) {
       if (this.boatController) {
         this.boatController.fixedUpdate(this.input, dt);
+      }
+      // Fishing system update in BOAT mode
+      if (this.fishing && this.boat) {
+        this.fishing.update(dt, this.input, this.boat, this.boatController, true);
       }
       this.trash.updateProximity(this.boatController ? this.boatController.physicsPosition : this.boat.position);
 
@@ -441,7 +491,7 @@ export class Engine {
         const done = this.harbour.unloadZone.updateUnload(dt);
         if (done) {
           const amount = this._pendingUnload?.amount ?? 0;
-          this.trash.boatTrashCount = Math.max(0, this.trash.boatTrashCount - amount); // 6. inventory out
+          this.trash.setBoatTrashCount(this.trash.boatTrashCount - amount); // 6. inventory out
           const reward = amount * ProgressionConfig.COINS_PER_TRASH;                    // 7. reward
           this.callbacks.onUnloadComplete?.(amount, reward);                            // 8-10. coins + HUD + +X
           this._pendingUnload = null;
@@ -455,6 +505,43 @@ export class Engine {
       if (atDock !== this.canLeaveBoat) {
         this.canLeaveBoat = atDock;
         this.callbacks.onDockState?.(atDock);
+      }
+    }
+
+    // ── High-frequency Multiplayer Movement Sync (20 Hz) ─────────────────────
+    this._netTimer = (this._netTimer || 0) + dt;
+    if (this._netTimer >= 0.05) {
+      this._netTimer = 0;
+      if (networkManager.isConnected()) {
+        if (GameState.is('HARBOR') && this.character) {
+          const pos = this.character.getPosition();
+          const yaw = this.character.yaw ?? (this.character.group ? this.character.group.rotation.y : 0);
+          const speed = this.character.speed ?? 0;
+          const anim = this.character.currentStateName || 'Idle';
+          networkManager.sendPlayerMove({
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            yaw,
+            speed,
+            animState: anim,
+            state: 'DOCKED',
+            boatLevel: this.boatLevel,
+          });
+        } else if (GameState.is('BOAT') && this.boat) {
+          const pos = this.boatController ? this.boatController.physicsPosition : this.boat.position;
+          const yaw = this.boatController ? this.boatController.physicsRotationY : this.boat.rotation.y;
+          const speed = this.boatController ? this.boatController.speed : 0;
+          networkManager.sendPlayerMove({
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            yaw,
+            speed,
+            state: 'ACTIVE',
+            boatLevel: this.boatLevel,
+          });
+        }
       }
     }
   }
@@ -488,10 +575,13 @@ export class Engine {
 
     s.target = next;
     this.renderer.setPixelRatio(next);
-    this.renderer.setSize(
-      this.container.clientWidth  || window.innerWidth,
-      this.container.clientHeight || window.innerHeight
-    );
+    const w = this.container.clientWidth  || window.innerWidth;
+    const h = this.container.clientHeight || window.innerHeight;
+    if (this._lastWidth !== w || this._lastHeight !== h) {
+      this._lastWidth = w;
+      this._lastHeight = h;
+      this.renderer.setSize(w, h);
+    }
   }
 
   _render(alpha, fd) {
@@ -650,7 +740,7 @@ export class Engine {
         pitch: this.boat.rotation.x,
         delay: BoatConfig.CAMERA.DELAY,
         yaw:   boatYaw,   // hull heading — camera trails it during turns
-        speedFactor: Math.min(1, Math.abs(speed) / BoatConfig.MAX_SPEED), // FOV
+        speedFactor: Math.min(1, Math.abs(speed) / (this.boatController?.maxSpeed ?? BoatConfig.MAX_SPEED)), // FOV
       } : null;
       this.camera_ctrl.update(followPos, boatYaw, this.input, fd, boatFeel);
 
@@ -674,11 +764,15 @@ export class Engine {
       this.boatAudio.update(fd, {
         speed: Math.abs(speed),
         throttle: Math.max(0, throttle),
+        maxSpeed: this.boatController?.maxSpeed ?? BoatConfig.MAX_SPEED,
         harborFactor,
         inBoat: true,
         active: true,
       });
     }
+
+    // Remote multiplayer boats update (wave bobbing & nametag billboards)
+    this.remotePlayers?.update(fd);
 
     this.renderer.render(this.scene, this.camera);
   }
@@ -705,6 +799,8 @@ export class Engine {
     this.cloudSystem?.dispose();
     this.trash.dispose();
     this.harbour?.dispose();
+    this.fishing?.dispose();
+    this.remotePlayers?.dispose();
     this.effects?.dispose();
     this.boatAudio?.dispose();
     AssetManager.dispose();
@@ -737,7 +833,8 @@ export class Engine {
 
     // A procedural sailboat keeps the gameplay-facing direction and the
     // visible bow in the same local -Z direction.
-    this.boat = this._createHarbourBoat();
+    this.boatLevel = 1;
+    this.boat = this._createHarbourBoat(this.boatLevel);
     this.boat.position.copy(this.harbour.boatSpawn);
     // Point the bow away from the shore so pressing W sails straight out of the
     // harbour into open water. Steering stays unambiguous: A = left, D = right.
@@ -748,128 +845,85 @@ export class Engine {
     this.dockTrigger = new THREE.Mesh(triggerGeometry, new THREE.MeshBasicMaterial({ visible: false }));
     this.dockTrigger.position.copy(this.harbour.boatSpawn);
     this.scene.add(this.dockTrigger);
+    this.trash.setCargoCapacity(BoatConfig.LEVELS[this.boatLevel - 1].capacity);
+    this.buoyancy.applyBoatScale(BoatConfig.LEVELS[this.boatLevel - 1].modelScale);
+    this.callbacks.onBoatUpgrade?.({ level: this.boatLevel });
+
+    // Fishing system — two designated endpoints on the harbor arms
+    this.fishing = new FishingSystem(this.scene, this.harbour, this.waveSampler, {
+      onNearFishingSpot:    (spot) => this.callbacks.onNearFishingSpot?.(spot),
+      onFishingStateChange: (state) => this.callbacks.onFishingStateChange?.(state),
+      onCastProgress:       (p) => this.callbacks.onFishingCastProgress?.(p),
+      onReelProgress:       (p) => this.callbacks.onFishingReelProgress?.(p),
+      onFishTimer:          (t) => this.callbacks.onFishingFishTimer?.(t),
+      onFishReady:          (r) => this.callbacks.onFishingFishReady?.(r),
+      onPendingCatchesChange: (c) => this.callbacks.onFishingPendingCatches?.(c),
+      onFishAlert:          (a) => this.callbacks.onFishingAlert?.(a),
+      onFishCaught:         (d) => this.callbacks.onFishCaught?.(d),
+      onPromptChange:       (p) => this.callbacks.onFishingPrompt?.(p),
+    });
+
+    // Multiplayer remote boats & nametag manager (Phase 2)
+    this.remotePlayers = new RemotePlayerManager(this.scene, this.waveSampler);
   }
 
-  _createHarbourBoat() {
-    const boat = new THREE.Group();
-    boat.name = 'Harbour Sailboat';
-    const hullMat = new THREE.MeshStandardMaterial({ color: 0xc86a08, roughness: 0.58 });
-    const hullDarkMat = new THREE.MeshStandardMaterial({ color: 0x8e4208, roughness: 0.7 });
-    const deckMat = new THREE.MeshStandardMaterial({ color: 0xe9a24a, roughness: 0.72 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x71330b, roughness: 0.8 });
-    const sailMat = new THREE.MeshStandardMaterial({ color: 0xfff0c5, roughness: 0.9, side: THREE.DoubleSide });
-    const ropeMat = new THREE.LineBasicMaterial({ color: 0x62300e });
-    const add = (mesh) => {
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      boat.add(mesh);
-      return mesh;
-    };
 
-    // Low-poly orange hull: squared stern with a pointed bow at local -Z.
-    const hull = add(new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.72, 3.8), hullMat));
-    hull.position.set(0, 0.35, 0.5);
-    const bow = add(new THREE.Mesh(new THREE.ConeGeometry(1.23, 1.45, 8), hullMat));
-    bow.rotation.x = -Math.PI / 2;
-    bow.position.set(0, 0.35, -2.12);
-    const keel = add(new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.28, 3.9), hullDarkMat));
-    keel.position.set(0, -0.02, 0.3);
-    const deck = add(new THREE.Mesh(new THREE.BoxGeometry(2.12, 0.18, 3.95), deckMat));
-    deck.position.set(0, 0.78, 0.22);
+  _createHarbourBoat(level = 1) {
+    return buildBoatModel(level, { isRemote: false });
+  }
 
-    // Deck planking keeps the handmade, game-like look from the reference.
-    for (let z = -1.35; z <= 1.75; z += 0.38) {
-      const plank = add(new THREE.Mesh(new THREE.BoxGeometry(2.04, 0.025, 0.035), woodMat));
-      plank.position.set(0, 0.885, z);
-    }
+  /** Buy and apply the next boat tier as one guarded, session-only transaction. */
+  tryUpgradeBoat(coins) {
+    if (!GameState.is('HARBOR')) return { ok: false, reason: 'not-in-harbor', level: this.boatLevel };
+    if (!this.boat || !this.trash) return { ok: false, reason: 'boat-unavailable', level: this.boatLevel };
+    if (!Number.isFinite(coins)) return { ok: false, reason: 'invalid-balance', level: this.boatLevel };
+    const next = BoatConfig.LEVELS[this.boatLevel];
+    if (!next) return { ok: false, reason: 'max-level', level: this.boatLevel };
+    if (coins < next.cost) return { ok: false, reason: 'insufficient-coins', level: this.boatLevel, cost: next.cost };
 
-    const mast = add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 4.6, 10), woodMat));
-    mast.position.set(0, 3.05, 0.15);
-    const boom = add(new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 2.3, 8), woodMat));
-    boom.rotation.z = Math.PI / 2;
-    boom.position.set(0, 1.55, -0.15);
-    const yard = add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.55, 8), woodMat));
-    yard.rotation.z = Math.PI / 2;
-    yard.position.set(0, 4.45, 0.15);
-
-    const makeSail = (points) => {
-      const shape = new THREE.Shape();
-      shape.moveTo(points[0][0], points[0][1]);
-      points.slice(1).forEach(([x, y]) => shape.lineTo(x, y));
-      shape.closePath();
-      const sail = add(new THREE.Mesh(new THREE.ShapeGeometry(shape), sailMat));
-      sail.position.z = -0.025;
-      return sail;
-    };
-    makeSail([[-0.08, 1.65], [-1.16, 1.78], [-1.16, 4.3], [-0.08, 4.38]]);
-    makeSail([[0.08, 1.65], [1.16, 1.78], [1.16, 4.3], [0.08, 4.38]]);
-
-    // Rigging, rear motor and small deck cargo complete the working cleanup boat.
-    const rig = (from, to) => boat.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]), ropeMat));
-    rig(new THREE.Vector3(0, 4.45, 0.15), new THREE.Vector3(-1.05, 0.95, -1.35));
-    rig(new THREE.Vector3(0, 4.45, 0.15), new THREE.Vector3(1.05, 0.95, 1.65));
-    const motor = add(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.42), hullDarkMat));
-    motor.position.set(0, 1.08, 2.15);
-    const crate = add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 0.5), woodMat));
-    crate.position.set(-0.48, 1.08, 0.9);
-    const ring = add(new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.055, 8, 14), sailMat));
-    ring.position.set(0.6, 1.08, 0.65);
-    ring.rotation.x = Math.PI / 2;
-
-    // Headlight casing & lens at the bow (relevant to boat size)
-    const headlightCasing = add(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.35, 8), woodMat));
-    headlightCasing.rotation.x = Math.PI / 2;
-    headlightCasing.position.set(0, 0.98, -2.5);
-
-    const headlightLens = add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05, 8), new THREE.MeshBasicMaterial({ color: 0xffeaad })));
-    headlightLens.rotation.x = Math.PI / 2;
-    headlightLens.position.set(0, 0.98, -2.68);
-
-    // ── Boat headlamp: ONE forward-facing spotlight cone ────────────────
-    // A real boat headlight throws a single tight cone ahead of the bow. The
-    // spotlight is parented to the boat (so it rotates with it) and its target
-    // is a child of the boat too (so it stays aimed straight ahead along -Z).
-    // The visible beam cone below exactly matches this spotlight's angle/range
-    // so there is NO second light source and nothing is cast behind the stern.
-    const HEADLIGHT_ANGLE = 0.30;   // ~17° half-angle — a realistic beam
-    const HEADLIGHT_RANGE = 55;     // metres
-    const headlight = new THREE.SpotLight(0xfff0c8, 5.0, HEADLIGHT_RANGE, HEADLIGHT_ANGLE, 0.45, 1.1);
-    headlight.position.set(0, 1.0, -2.7);
-    headlight.castShadow = false; // cheap; no real-time spot shadows on the ocean
-
-    // Aim the cone straight ahead: boat forward is local -Z, so the target
-    // sits far ahead on the boat's own axis (parented to the boat = rotates
-    // with it, never drags behind).
-    const target = new THREE.Object3D();
-    target.position.set(0, 0.4, -30.0);
-    boat.add(target);
-    headlight.target = target;
-
-    boat.add(headlight);
-    boat.userData.headlight = headlight;
-
-    // Volumetric beam cone matched to the spotlight's cone (same angle/range)
-    // so the visible light and the actual light always line up perfectly.
-    const beamLen = HEADLIGHT_RANGE * 0.6;                 // ~33
-    const beamRadius = Math.tan(HEADLIGHT_ANGLE) * beamLen; // matches spot cone
-    const beamGeom = new THREE.ConeGeometry(beamRadius, beamLen, 16, 1, true);
-    beamGeom.translate(0, -beamLen / 2, 0); // translate so origin is at the tip
-    const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xfff0c8,
-      transparent: true,
-      opacity: 0.14,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      fog: false,
+    const oldBoat = this.boat;
+    const oldPosition = oldBoat.position.clone();
+    const oldRotation = oldBoat.rotation.clone();
+    const upgradedBoat = this._createHarbourBoat(next.level);
+    upgradedBoat.position.copy(oldPosition);
+    upgradedBoat.rotation.copy(oldRotation);
+    this.scene.add(upgradedBoat);
+    this.scene.remove(oldBoat);
+    oldBoat.traverse(child => {
+      if (child.userData.headlight) {
+        child.userData.headlight.target.parent?.remove(child.userData.headlight.target);
+        this.scene.remove(child.userData.headlight.target);
+      }
+      if (child.geometry && !child.userData.sharedResource) child.geometry.dispose();
+      if (Array.isArray(child.material)) child.material.forEach(material => material.dispose());
+      else child.material?.dispose();
     });
-    const beamMesh = new THREE.Mesh(beamGeom, beamMat);
-    beamMesh.rotation.x = Math.PI / 2; // point along local -Z (90 degrees around X)
-    beamMesh.position.set(0, 1.0, -2.7);
-    boat.add(beamMesh);
-    boat.userData.headlightBeam = beamMesh;
 
-    return boat;
+    this.boat = upgradedBoat;
+    this.boatLevel = next.level;
+    if (this.remotePlayers?.localPlayer) {
+      this.remotePlayers.setLocalPlayer(this.remotePlayers.localPlayer, this.boat);
+    }
+    if (this.boatController) {
+      this.boatController.boat = upgradedBoat;
+      this.boatController.applyUpgrade(next);
+      this.boatController.inertia.maxSpeed = next.speed;
+      this.boatController.physicsPosition.copy(oldPosition);
+      this.boatController.prevPosition.copy(oldPosition);
+      this.boatController.physicsRotationY = oldRotation.y;
+      this.boatController.prevRotationY = oldRotation.y;
+    }
+    this.trash.setCargoCapacity(next.capacity);
+    this.buoyancy.applyBoatScale(next.modelScale);
+    this.callbacks.onBoatUpgrade?.({ level: next.level });
+
+    // Sync upgraded boat level across multiplayer fleet
+    networkManager.sendPlayerState({
+      state: GameState.is('BOAT') ? 'ACTIVE' : 'DOCKED',
+      boatLevel: next.level,
+    });
+
+    return { ok: true, level: next.level, cost: next.cost, coins: coins - next.cost };
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -898,9 +952,66 @@ export class Engine {
     this.callbacks.onUnloadingChanged?.(true);
   }
 
+  /** Public helper to terminate active fishing and restore player movement. */
+  stopFishing() {
+    if (!this.fishing) return;
+    const ctrl = GameState.is('BOAT') ? this.boatController : this.character;
+    this.fishing.stopFishing(ctrl);
+    // Guarantees character and boat controller states are fully restored
+    if (this.character) {
+      if (this.character.resetMovement) {
+        this.character.resetMovement();
+      } else {
+        this.character.isFishing = false;
+        this.character._fishingLockPos = null;
+        this.character.enabled = true;
+        if (this.character.currentStateName === 'Fish') {
+          this.character.currentStateName = 'Idle';
+        }
+      }
+    }
+    if (this.boatController) {
+      this.boatController.enabled = true;
+    }
+  }
+
+  /** Public helper to board boat from UI or key interactions. */
+  boardBoat() {
+    this._boardBoat();
+  }
+
+  // ── Multiplayer Remote Boats (Phase 2) ──────────────────────────
+
+  setLocalMultiplayerPlayer(player) {
+    if (this.remotePlayers) {
+      this.remotePlayers.setLocalPlayer(player, this.boat);
+    }
+  }
+
+  spawnRemotePlayer(player) {
+    this.remotePlayers?.addPlayer(player);
+  }
+
+  removeRemotePlayer(playerId) {
+    this.remotePlayers?.removePlayer(playerId);
+  }
+
+  syncRemotePlayers(playersList, localPlayerId) {
+    this.remotePlayers?.syncPlayers(playersList, localPlayerId);
+  }
+
+  handleRemotePlayerMove(data) {
+    this.remotePlayers?.handlePlayerMove(data);
+  }
+
+  handleRemotePlayerState(data) {
+    this.remotePlayers?.handlePlayerState(data);
+  }
+
   /** Instant board — press E next to the boat to take control immediately. */
   _boardBoat() {
     if (!this.boat || !this.harbour) return;
+    this.stopFishing();
     this.isNearBoat = false;
     this._wasNearBoat = false;
     this.callbacks.onNearBoat?.(false);
@@ -914,6 +1025,8 @@ export class Engine {
     if (!this.boat || !this.harbour) return;
     this.canLeaveBoat = false;
     this.callbacks.onDockState?.(false);
+    // Stop any active fishing session before disembarking
+    this.stopFishing();
     // Place the character on the nearest safe dock position and hand control
     // straight back to the character (the player keeps exploring the harbour).
     const exit = this.harbour.boardingPoint.clone().add(new THREE.Vector3(-1.2, 0, -1.2));
@@ -938,6 +1051,21 @@ export class Engine {
     this.waterFollowsCamera = false; // static water for harbor
     this.canLeaveBoat = false;
     this.callbacks.onDockState?.(false);
+    if (this.character) {
+      if (this.character.resetMovement) {
+        this.character.resetMovement();
+      } else {
+        this.character.enabled = true;
+        this.character.isFishing = false;
+        this.character._fishingLockPos = null;
+        if (this.character.currentStateName === 'Fish') {
+          this.character.currentStateName = 'Idle';
+        }
+      }
+    }
+    if (this.boatController) {
+      this.boatController.enabled = false;
+    }
     this._setupHarbor();
   }
 
@@ -948,6 +1076,7 @@ export class Engine {
     this.callbacks.onDockState?.(false);
     if (!this.boatController && this.boat) {
       this.boatController = new BoatController(this.boat, this.input, this.colliders);
+      this.boatController.applyUpgrade(BoatConfig.LEVELS[this.boatLevel - 1]);
     }
     if (this.boatController) {
       this.boatController.physicsPosition.copy(this.boat.position);
@@ -959,6 +1088,21 @@ export class Engine {
     // Start ocean sailing — no objective system, the player just cleans.
     this.waterFollowsCamera = true; // water follows camera for ocean illusion
     this.callbacks.onGameMode?.('boat');
+
+    // Sync state to multiplayer server: ACTIVE in boat
+    const boatPos = this.boatController ? this.boatController.physicsPosition : (this.boat ? this.boat.position : new THREE.Vector3());
+    const boatYaw = this.boatController ? this.boatController.physicsRotationY : (this.boat ? this.boat.rotation.y : 0);
+    networkManager.sendPlayerState({
+      state: 'ACTIVE',
+      boatLevel: this.boatLevel,
+      transform: {
+        x: boatPos.x,
+        y: boatPos.y,
+        z: boatPos.z,
+        yaw: boatYaw,
+        speed: 0,
+      },
+    });
   }
 
   _exitHarbor() {
@@ -986,6 +1130,22 @@ export class Engine {
     // Mode handoff only — collected trash stays aboard (boatTrashCount) until
     // the future unload mechanic (Part 2). Nothing completes on return.
     this.callbacks.onGameMode?.('harbor');
+
+    // Sync state to multiplayer server: DOCKED on foot
+    const charPos = this.character.getPosition();
+    const charYaw = this.character.yaw ?? (this.character.group ? this.character.group.rotation.y : 0);
+    networkManager.sendPlayerState({
+      state: 'DOCKED',
+      boatLevel: this.boatLevel,
+      transform: {
+        x: charPos.x,
+        y: charPos.y,
+        z: charPos.z,
+        yaw: charYaw,
+        speed: 0,
+        animState: 'Idle',
+      },
+    });
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1084,6 +1244,8 @@ export class Engine {
     this.chunks?.rebase(); // flat seabed reloads invisibly next chunks.update()
     this.camera_ctrl?.rebase(offset);
     this.effects?.rebase(offset);
+    this.fishing?.rebase(offset);
+    this.remotePlayers?.rebase(offset);
     // Water and sky follow the camera — sync them to the rebased camera now so
     // the horizon does not lag one frame behind during the rebase.
     if (this.water) { this.water.position.x = this.camera.position.x; this.water.position.z = this.camera.position.z; }

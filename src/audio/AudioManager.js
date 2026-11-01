@@ -100,6 +100,72 @@ class SoundController {
       osc.stop(now + 0.08);
     } catch (e) { }
   }
+
+  playCastSound() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.25);
+      gain.gain.setValueAtTime(0.35 * this.volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+      osc.connect(gain);
+      gain.connect(this.master || this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.25);
+    } catch (e) { }
+  }
+
+  playBiteAlertSound() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      for (let i = 0; i < 2; i++) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        const t = now + i * 0.12;
+        osc.frequency.setValueAtTime(520 + i * 200, t);
+        osc.frequency.exponentialRampToValueAtTime(880 + i * 200, t + 0.08);
+        gain.gain.setValueAtTime(0.4 * this.volume, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.08);
+        osc.connect(gain);
+        gain.connect(this.master || this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.08);
+      }
+    } catch (e) { }
+  }
+
+  playCatchSound() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const notes = [440, 554.37, 659.25, 880]; // A major arpeggio
+      notes.forEach((freq, idx) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const t = now + idx * 0.08;
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.3 * this.volume, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+        osc.connect(gain);
+        gain.connect(this.master || this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.2);
+      });
+    } catch (e) { }
+  }
 }
 
 export const soundFx = new SoundController();

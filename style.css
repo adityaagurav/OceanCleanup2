@@ -335,6 +335,18 @@
 .anim-wave-fast { animation: waveX 15s linear infinite; }
 .anim-glow     { animation: glowPulse 6s ease-in-out infinite; }
 
+/* ── Ocean Facts Progress & Timeout animations ─────────────── */
+@keyframes factProgress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+@keyframes factTimeout {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+.anim-fact-progress { animation: factProgress var(--progress-dur, 16s) linear forwards; }
+.anim-fact-timeout  { animation: factTimeout var(--timeout-dur, 12s) linear forwards; }
+
 /* ── Landing page (MainMenu) ─────────────────────────────────── */
 @keyframes heroRise {
   from { opacity: 0; transform: translateY(18px); }

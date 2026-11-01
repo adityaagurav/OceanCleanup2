@@ -17,7 +17,7 @@ import * as THREE from 'three';
  *          └─ rightUpperLeg → rightLowerLeg → rightFoot
  */
 export class ProceduralCharacter {
-  constructor() {
+  constructor(options = {}) {
     this.root = new THREE.Group();
     // Character height ≈ 1.75 m (5'9") — the whole world (harbour props, piers,
     // buildings, vehicles) is sized against this reference so nothing reads as
@@ -29,6 +29,7 @@ export class ProceduralCharacter {
     this._state  = 'Idle';
     this._speed  = 0;
 
+    this.options = options;
     this._build();
   }
 
@@ -41,6 +42,23 @@ export class ProceduralCharacter {
 
   /** Remove from scene */
   removeFrom(scene) { scene.remove(this.root); }
+
+  /** Dispose all geometries and materials */
+  dispose() {
+    this.root.traverse((child) => {
+      if (child.isMesh || child.isLine) {
+        if (child.geometry) child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach((m) => m.dispose());
+        } else if (child.material) {
+          child.material.dispose();
+        }
+      }
+    });
+    if (this.root.parent) {
+      this.root.parent.remove(this.root);
+    }
+  }
 
   /**
    * Drive animations every render frame.
@@ -62,11 +80,13 @@ export class ProceduralCharacter {
   _build() {
     // ── Materials ───────────────────────────────────────────────────
     const skin    = this._mat(0xf5c5a0); // skin tone
-    const shirt   = this._mat(0x2563eb); // blue shirt
+    const shirtColor = this.options?.shirtColor ?? 0x2563eb;
+    const packColor  = this.options?.packColor  ?? 0x16a34a;
+    const shirt   = this._mat(shirtColor);
     const pants   = this._mat(0x1e293b); // dark pants
     const shoes   = this._mat(0x292524); // dark shoes
     const hair    = this._mat(0x292524); // dark hair/hat
-    const pack    = this._mat(0x16a34a); // green backpack
+    const pack    = this._mat(packColor);
 
     // ── Torso ───────────────────────────────────────────────────────
     this.torso = this._box(0.55, 0.65, 0.28, shirt);
@@ -312,18 +332,36 @@ export class ProceduralCharacter {
 
   _buildFishingRod() {
     const rod = new THREE.Group();
-    const rodMat = this._mat(0x92400e); // brown wood
+    const handleMat = this._mat(0x8b5a2b); // cork / wood
+    const blankMat  = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.7 });
+    const metalMat  = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.3, metalness: 0.8 });
 
-    // Rod shaft
-    const shaft = this._box(0.03, 0.9, 0.03, rodMat);
-    shaft.position.y = 0.45;
-    rod.add(shaft);
+    // Handle
+    const handle = this._box(0.06, 0.45, 0.06, handleMat);
+    handle.position.y = 0.22;
+    rod.add(handle);
 
-    // Fishing line
-    const lineMat = new THREE.LineBasicMaterial({ color: 0xcccccc });
+    // Reel
+    const reel = this._box(0.08, 0.12, 0.10, metalMat);
+    reel.position.set(0.06, 0.38, 0);
+    rod.add(reel);
+
+    // Long tapered rod blank
+    const blank = this._box(0.035, 1.8, 0.035, blankMat);
+    blank.position.y = 1.35;
+    rod.add(blank);
+
+    // Tip guide ring
+    const tip = this._box(0.06, 0.06, 0.06, metalMat);
+    tip.position.y = 2.25;
+    rod.add(tip);
+    this.fishingRodTip = tip;
+
+    // Line running from tip
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
     const lineGeo  = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0.9, 0),
-      new THREE.Vector3(0.1, -0.5, 0.8),
+      new THREE.Vector3(0, 2.25, 0),
+      new THREE.Vector3(0.2, 0.0, 1.6),
     ]);
     rod.add(new THREE.Line(lineGeo, lineMat));
 

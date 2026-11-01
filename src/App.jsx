@@ -10,6 +10,8 @@ import { soundFx }   from './audio/AudioManager';
 import { PerformanceConfig } from './config/PerformanceConfig.js';
 import { ProgressionConfig } from './config/ProgressionConfig.js';
 import { WeeklyQuestsClass } from './config/WeeklyQuests.js';
+import { oceanFactsManager } from './data/oceanFacts.js';
+import { networkManager } from './multiplayer/NetworkManager.js';
 
 // Screen-transition timing (ms) — shared by the navigate() timers and the
 // overlay's inline transition so they can never drift apart.
@@ -50,18 +52,57 @@ function App() {
   // (boatTrashCount / deliveredTrashCount / coins / weeklyQuest) — the old
   // mission/score state was removed with the mission system.
   const [progression,  setProgression]  = useState(ProgressionConfig.createSessionState);
+  const upgradeClickLockRef = useRef(false);
   const [boatSpeed,    setBoatSpeed]    = useState(0);
   const [pickupToast,  setPickupToast]  = useState(false);
   const [nearTrash,    setNearTrash]    = useState(false);
   const [isPaused,     setIsPaused]     = useState(false);
   const [gameMode,     setGameMode]     = useState('harbor'); // 'harbor' | 'boat'
   const [isNearBoat,   setIsNearBoat]   = useState(false);
+  const [isUpgradeOpen, setIsUpgradeOpen] = useState(false); // only open when near boat & toggled with E
   const [isDocked,     setIsDocked]     = useState(false);
   const [nearUnloadZone, setNearUnloadZone] = useState(false); // boat in the recycling zone
   const [isUnloading, setIsUnloading]     = useState(false);   // unload animation in flight
+  const [upgradeMessage, setUpgradeMessage] = useState(null);
+  const upgradeMessageTimerRef = useRef(null);
   // Coin reward popup: { amount, key } — rendered by the HUD near the counter.
   const [coinPopup, setCoinPopup] = useState(null);
   const coinPopupTimerRef = useRef(null);
+
+  // ── Fishing Feature ───────────────────────────────────────────
+  const [fishingData, setFishingData] = useState({
+    spot: null,         // 'left' | 'right' | null
+    state: 'idle',      // 'idle' | 'casting' | 'fishing' | 'fish_ready' | 'reeling' | 'caught'
+    castProgress: 0,    // 0..1 hold-F progress
+    reelProgress: 0,    // 0..1 hold-R progress
+    fishTimer: 20,      // seconds until next fish (counts down from 20)
+    fishReady: false,   // true when fish is on the line
+    fishCount: 0,       // total fish caught this session
+    pendingCatches: 0,  // catches waiting to be retrieved
+    fishAlert: null,    // popup alert packet: { text, key, count }
+  });
+
+  // ── Multiplayer Network State (Phase 1) ───────────────────────
+  const [networkState, setNetworkState] = useState(() => networkManager.state);
+  useEffect(() => {
+    const unsubscribe = networkManager.subscribe((state) => {
+      setNetworkState(state);
+    });
+    // Connect to multiplayer server
+    networkManager.connect();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+  const handleReconnectMultiplayer = () => {
+    networkManager.connect();
+  };
+
+  // ── Ocean Education Facts System ──────────────────────────────
+  const [gameplayFact, setGameplayFact] = useState(null);
+  const [harborFact,   setHarborFact]   = useState(() => oceanFactsManager.getHarborFact());
+  const [recycleFact,  setRecycleFact]  = useState(null);
+  const gameplayFactTimerRef = useRef(null);
 
   // ── Weekly quests (Part 4) ─────────────────────────────────────
   // Central quest authority; the UI renders plain snapshots. Progress is
@@ -116,10 +157,17 @@ function App() {
 
     setProgression(ProgressionConfig.createSessionState());
     setBoatSpeed(0);
+    setUpgradeMessage(null);
+    upgradeClickLockRef.current = false;
     setIsPaused(false); setNearTrash(false);
     setIsNearBoat(false); setIsDocked(false);
+    setIsUpgradeOpen(false);
     setNearUnloadZone(false);
     setIsUnloading(false);
+    setGameplayFact(null);
+    setRecycleFact(null);
+    setFishingData({ spot: null, state: 'idle', castProgress: 0, reelProgress: 0, fishTimer: 20, fishReady: false, fishCount: 0, pendingCatches: 0, fishAlert: null });
+    setHarborFact(oceanFactsManager.getHarborFact());
     setGameMode('harbor');
     setCompass({ heading: 0, harbour: 0, dist: 0 });
 
@@ -139,6 +187,14 @@ function App() {
           toastTimerRef.current = setTimeout(() => setPickupToast(false), 1200);
         },
         onNearTrash: (isNear) => setNearTrash(isNear),
+        onPickupBlocked: (message) => {
+          setUpgradeMessage({ text: message, tone: 'warning', key: Date.now() });
+          if (upgradeMessageTimerRef.current) clearTimeout(upgradeMessageTimerRef.current);
+          upgradeMessageTimerRef.current = setTimeout(() => setUpgradeMessage(null), 2200);
+        },
+        onBoatUpgrade: ({ level }) => {
+          setProgression(p => ({ ...p, boatLevel: level }));
+        },
         // Perf: only re-render the HUD when the shown knots value changes
         // (the engine pushes speed every frame; ~10 real updates/sec instead
         // of ~60 whole-tree React re-renders/sec).
@@ -149,8 +205,16 @@ function App() {
           setBoatSpeed(speed);
         },
         // Mode handoff only ('harbor' | 'boat') — replaces onMissionState.
-        onGameMode: setGameMode,
-        onNearBoat: (isNear) => setIsNearBoat(isNear),
+        onGameMode: (mode) => {
+          setGameMode(mode);
+          if (mode === 'boat') setIsUpgradeOpen(false);
+        },
+        onNearBoat: (isNear) => {
+          setIsNearBoat(isNear);
+          if (!isNear) setIsUpgradeOpen(false); // auto-close when moving away from boat
+        },
+        onToggleUpgrade: () => setIsUpgradeOpen(v => !v),
+        onCloseUpgrade: () => setIsUpgradeOpen(false),
         onDockState: (docked) => setIsDocked(docked),
         // Unload-zone proximity + interaction (Part 3).
         onUnloadZone: (near) => setNearUnloadZone(near),
@@ -182,21 +246,96 @@ function App() {
           setCoinPopup({ amount: reward, key: Date.now() });
           if (coinPopupTimerRef.current) clearTimeout(coinPopupTimerRef.current);
           coinPopupTimerRef.current = setTimeout(() => setCoinPopup(null), 1100);
+
+          // Ocean Education Facts System: Display a relevant pollution or recycling fact!
+          if (amount > 0) {
+            const relevantFact = oceanFactsManager.getRecyclingFact();
+            if (relevantFact) {
+              setRecycleFact({ fact: relevantFact, amount, reward, key: Date.now() });
+            }
+          }
         },
         // Day/night: HUD flips to the deep-navy glass variant at night.
         onNightChange: (night) => setIsNight(night),
         // Compass: throttled heading/harbour updates for the top-centre rose.
         onCompass: (data) => setCompass(data),
+        // ── Fishing Feature callbacks ───────────────────────────────
+        onNearFishingSpot: (spot) => setFishingData(d => ({ ...d, spot })),
+        onFishingStateChange: (state) => setFishingData(d => ({ ...d, state, ...(state !== 'idle' ? { castProgress: 0 } : {}) })),
+        onFishingCastProgress: (p) => setFishingData(d => ({ ...d, castProgress: p })),
+        onFishingReelProgress: (p) => setFishingData(d => ({ ...d, reelProgress: p })),
+        onFishingFishTimer: (t) => setFishingData(d => ({ ...d, fishTimer: t })),
+        onFishingFishReady: (r) => setFishingData(d => ({ ...d, fishReady: r })),
+        onFishingPendingCatches: (c) => setFishingData(d => ({ ...d, pendingCatches: c })),
+        onFishingAlert: (alert) => setFishingData(d => ({ ...d, fishAlert: alert })),
+        onFishCaught: ({ count, points }) => {
+          setFishingData(d => ({ ...d, fishCount: count }));
+          // Award fishing coins (3 per fish — less than recycling's 5)
+          setProgression(p => {
+            const coins = p.coins + points;
+            ProgressionConfig.saveCoins(coins);
+            return { ...p, coins };
+          });
+          setCoinPopup({ amount: points, key: Date.now() });
+          if (coinPopupTimerRef.current) clearTimeout(coinPopupTimerRef.current);
+          coinPopupTimerRef.current = setTimeout(() => setCoinPopup(null), 1100);
+        },
       },
       { trashDensity: settings.trashDensity, quality: settings.quality }
     );
 
     engineRef.current = engine;
     window.game = engine;
+
+    // ── Phase 2: Wire Multiplayer Remote Boats to Engine ─────────
+    if (networkManager.state.localPlayer) {
+      engine.setLocalMultiplayerPlayer(networkManager.state.localPlayer);
+    }
+    if (networkManager.state.players.length > 0) {
+      engine.syncRemotePlayers(networkManager.state.players, networkManager.state.playerId);
+    }
+
+    const unsubJoinSuccess = networkManager.on('joinSuccess', (payload) => {
+      if (payload.localPlayer) {
+        engine.setLocalMultiplayerPlayer(payload.localPlayer);
+      }
+      if (payload.existingPlayers) {
+        payload.existingPlayers.forEach((p) => engine.spawnRemotePlayer(p));
+      }
+    });
+
+    const unsubPlayerJoined = networkManager.on('playerJoined', (player) => {
+      engine.spawnRemotePlayer(player);
+    });
+
+    const unsubPlayerLeft = networkManager.on('playerLeft', (payload) => {
+      engine.removeRemotePlayer(payload.playerId);
+    });
+
+    const unsubPlayersList = networkManager.on('playersList', (players) => {
+      engine.syncRemotePlayers(players, networkManager.state.playerId);
+    });
+
+    const unsubPlayerMoved = networkManager.on('playerMoved', (data) => {
+      engine.handleRemotePlayerMove(data);
+    });
+
+    const unsubPlayerStateChanged = networkManager.on('playerStateChanged', (data) => {
+      engine.handleRemotePlayerState(data);
+    });
+
     return () => {
+      unsubJoinSuccess();
+      unsubPlayerJoined();
+      unsubPlayerLeft();
+      unsubPlayersList();
+      unsubPlayerMoved();
+      unsubPlayerStateChanged();
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (coinPopupTimerRef.current) clearTimeout(coinPopupTimerRef.current);
+      if (upgradeMessageTimerRef.current) clearTimeout(upgradeMessageTimerRef.current);
       if (questToastTimerRef.current) clearTimeout(questToastTimerRef.current);
+      if (gameplayFactTimerRef.current) clearTimeout(gameplayFactTimerRef.current);
       engine.destroy();
       engineRef.current = null;
       if (window.game === engine) window.game = null;
@@ -212,6 +351,41 @@ function App() {
     else          engineRef.current.resume();
   }, [isPaused]);
 
+  /** Purchase one boat tier; only deduct funds after Engine confirms success. */
+  // The click lock is a synchronous re-entry guard for rapid double clicks.
+  // It MUST be released when the handler finishes in EVERY path — the engine
+  // already blocks duplicates on its own (boatLevel advanced + balance check),
+  // so a lock left engaged after a successful purchase would silently swallow
+  // every later click (e.g. the Level 2 → Level 3 buy never firing).
+  const handleUpgradeBoat = () => {
+    if (upgradeClickLockRef.current) return;
+    const engine = engineRef.current;
+    if (!engine || engine.boatLevel !== progression.boatLevel) return;
+    upgradeClickLockRef.current = true;
+    try {
+      const result = engine.tryUpgradeBoat(progression.coins);
+      if (!result.ok) {
+        const text = result.reason === 'max-level'
+          ? 'Boat is already at maximum level'
+          : result.reason === 'insufficient-coins'
+            ? `Not enough coins · need ${result.cost}`
+            : 'Upgrade is unavailable right now';
+        setUpgradeMessage({ text, tone: 'warning', key: Date.now() });
+        if (upgradeMessageTimerRef.current) clearTimeout(upgradeMessageTimerRef.current);
+        upgradeMessageTimerRef.current = setTimeout(() => setUpgradeMessage(null), 2400);
+        return;
+      }
+      setProgression(p => ({ ...p, coins: Math.max(0, p.coins - result.cost), boatLevel: result.level }));
+      setUpgradeMessage({ text: `Boat upgraded to Level ${result.level}`, tone: 'success', key: Date.now() });
+      if (upgradeMessageTimerRef.current) clearTimeout(upgradeMessageTimerRef.current);
+      upgradeMessageTimerRef.current = setTimeout(() => setUpgradeMessage(null), 2400);
+    } finally {
+      // Release the lock on every path — success, failure and thrown errors —
+      // so the next purchase (up to Level 3) can always fire.
+      upgradeClickLockRef.current = false;
+    }
+  };
+
   /** Claim a weekly quest reward (once) — coins join the normal balance. */
   const handleClaimQuest = (id) => {
     const reward = questSystem.claim(id);
@@ -226,6 +400,104 @@ function App() {
     if (questToastTimerRef.current) clearTimeout(questToastTimerRef.current);
     questToastTimerRef.current = setTimeout(() => setQuestToast(null), 2200);
   };
+
+  // ── Ocean Education Facts Handlers & Gameplay Timer ─────────────
+  const handleNextHarborFact = () => {
+    soundFx.playButtonClick();
+    setHarborFact(oceanFactsManager.getHarborFact());
+  };
+
+  const handleDismissGameplayFact = () => {
+    setGameplayFact(null);
+  };
+
+  const handleDismissRecycleFact = () => {
+    setRecycleFact(null);
+  };
+
+  // ── Boat Upgrade Panel & Boarding Handlers ───────────────────────
+  const handleCloseUpgrade = () => {
+    setIsUpgradeOpen(false);
+  };
+
+  const handleBoardBoat = () => {
+    setIsUpgradeOpen(false);
+    engineRef.current?.boardBoat();
+  };
+
+  /** Stop fishing — called from the HUD stop button. */
+  const handleStopFishing = () => {
+    engineRef.current?.stopFishing();
+  };
+
+  /** Start game with specified guest username and join multiplayer */
+  const handleStartGame = (username) => {
+    if (username) {
+      networkManager.joinGame(username, progression.boatLevel || 1);
+    }
+    navigate('GAME');
+  };
+
+  // Automatically join multiplayer when in active game session if not already joined
+  useEffect(() => {
+    if (scene === 'GAME' && !networkState.hasJoined && networkState.connected) {
+      networkManager.joinGame(networkState.username || networkState.tempUsername || '', progression.boatLevel || 1);
+    }
+  }, [scene, networkState.hasJoined, networkState.connected]);
+
+  // Periodic random fact popups every 60–90 seconds during active gameplay
+  useEffect(() => {
+    if (scene !== 'GAME' || isPaused) return;
+
+    let timer = null;
+    const scheduleNextFact = () => {
+      // Random delay between 60,000 and 90,000 ms (60–90s)
+      const delay = 60000 + Math.random() * 30000;
+      timer = setTimeout(() => {
+        const fact = oceanFactsManager.getGameplayFact();
+        if (fact) {
+          setGameplayFact({ fact, key: Date.now() });
+        }
+        scheduleNextFact();
+      }, delay);
+      gameplayFactTimerRef.current = timer;
+    };
+
+    scheduleNextFact();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [scene, isPaused, sessionId]);
+
+  // Expose test controls on window for direct verification & debugging
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.__oceanFacts = {
+      manager: oceanFactsManager,
+      triggerGameplayFact: (factId) => {
+        const fact = factId ? oceanFactsManager.getFactById(factId) : oceanFactsManager.getGameplayFact();
+        if (fact) setGameplayFact({ fact, key: Date.now() });
+        return fact;
+      },
+      triggerRecycleFact: (amount = 3, reward = 30, factId) => {
+        const fact = factId ? oceanFactsManager.getFactById(factId) : oceanFactsManager.getRecyclingFact();
+        if (fact) setRecycleFact({ fact, amount, reward, key: Date.now() });
+        return fact;
+      },
+      rotateHarborFact: (factId) => {
+        const fact = factId ? oceanFactsManager.getFactById(factId) : oceanFactsManager.getHarborFact();
+        if (fact) setHarborFact(fact);
+        return fact;
+      },
+      dismissGameplayFact: () => setGameplayFact(null),
+      dismissRecycleFact: () => setRecycleFact(null),
+      getState: () => ({ gameplayFact, harborFact, recycleFact }),
+    };
+    return () => {
+      delete window.__oceanFacts;
+    };
+  }, [gameplayFact, harborFact, recycleFact]);
 
   const inBoat = gameMode === 'boat';
 
@@ -244,8 +516,11 @@ function App() {
       {scene === 'MENU' && (
         <MainMenu
           onNavigate={navigate}
+          onStartGame={handleStartGame}
           soundMuted={settings.soundMuted}
           onToggleSound={handleToggleSound}
+          networkState={networkState}
+          onReconnectMultiplayer={handleReconnectMultiplayer}
         />
       )}
 
@@ -262,7 +537,13 @@ function App() {
       {scene === 'CREDITS' && <Credits onNavigate={navigate} />}
 
       {scene === 'GAME' && (
-        <div className="w-full h-full relative">
+        <div
+          className="w-full h-full relative cursor-grab active:cursor-grabbing"
+          onClick={() => {
+            if (typeof window !== 'undefined' && window.focus) window.focus();
+            engineRef.current?.camera_ctrl?.requestLock?.();
+          }}
+        >
           <div ref={containerRef} className="w-full h-full absolute inset-0" />
 
           <DebugOverlay engineRef={engineRef} />
@@ -270,6 +551,8 @@ function App() {
           <HUD
             progression={progression}
             boatSpeed={boatSpeed}
+            upgradeMessage={upgradeMessage}
+            onUpgradeBoat={handleUpgradeBoat}
             pickupToast={pickupToast}
             nearTrash={nearTrash}
             isNearBoat={isNearBoat}
@@ -289,6 +572,19 @@ function App() {
             speedUnit={settings.speedUnit}
             sessionId={sessionId}
             compass={compass}
+            gameplayFact={gameplayFact}
+            onDismissGameplayFact={handleDismissGameplayFact}
+            harborFact={harborFact}
+            onNextHarborFact={handleNextHarborFact}
+            recycleFact={recycleFact}
+            onDismissRecycleFact={handleDismissRecycleFact}
+            isUpgradeOpen={isUpgradeOpen}
+            onCloseUpgrade={handleCloseUpgrade}
+            onBoardBoat={handleBoardBoat}
+            fishingData={fishingData}
+            onStopFishing={handleStopFishing}
+            networkState={networkState}
+            onReconnectMultiplayer={handleReconnectMultiplayer}
           />
 
           {isPaused && (

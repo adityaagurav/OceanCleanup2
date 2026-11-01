@@ -1,3 +1,10 @@
+const _raf = typeof requestAnimationFrame !== 'undefined'
+  ? requestAnimationFrame
+  : (fn) => setTimeout(fn, 16);
+const _caf = typeof cancelAnimationFrame !== 'undefined'
+  ? cancelAnimationFrame
+  : (id) => clearTimeout(id);
+
 /**
  * GameLoop.js — Fixed-timestep game loop with render interpolation.
  * 
@@ -34,14 +41,14 @@ export class GameLoop {
   stop() {
     this._running = false;
     if (this._rafId !== null) {
-      cancelAnimationFrame(this._rafId);
+      _caf(this._rafId);
       this._rafId = null;
     }
   }
 
   _tick() {
     if (!this._running) return;
-    this._rafId = requestAnimationFrame(() => this._tick());
+    this._rafId = _raf(() => this._tick());
 
     const now = performance.now();
     let frameDelta = (now - this._lastTime) / 1000; // seconds
@@ -53,13 +60,22 @@ export class GameLoop {
     this._accumulator += frameDelta;
 
     // Run as many fixed physics steps as accumulated time allows
-    while (this._accumulator >= this.FIXED_DELTA) {
-      this.onFixedUpdate(this.FIXED_DELTA);
-      this._accumulator -= this.FIXED_DELTA;
+    try {
+      while (this._accumulator >= this.FIXED_DELTA) {
+        this.onFixedUpdate(this.FIXED_DELTA);
+        this._accumulator -= this.FIXED_DELTA;
+      }
+    } catch (err) {
+      console.error('[GameLoop] Error during onFixedUpdate:', err);
+      this._accumulator = 0; // prevent runaway accumulation on error
     }
 
     // Alpha = how far between two physics steps we are (for interpolation)
     const alpha = this._accumulator / this.FIXED_DELTA;
-    this.onRender(alpha, frameDelta);
+    try {
+      this.onRender(alpha, frameDelta);
+    } catch (err) {
+      console.error('[GameLoop] Error during onRender:', err);
+    }
   }
 }
