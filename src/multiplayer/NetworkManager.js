@@ -71,47 +71,89 @@ export class NetworkManager {
 
   /**
    * Determine the multiplayer server URL dynamically.
-   * If accessing from http://192.168.1.3:5173 on another laptop,
-   * automatically resolves to http://192.168.1.3:3001.
+   * Remote clients (e.g. friend accessing http://172.20.10.2:5173/) automatically
+   * connect to http://172.20.10.2:3001 and NEVER localhost or 127.0.0.1.
+   * Host accessing localhost connects to http://localhost:3001.
    */
   _resolveServerUrl() {
     if (typeof window === 'undefined') {
       return 'http://localhost:3001';
     }
 
+    const hostname = window.location.hostname || 'localhost';
+    const isLocalhostClient = hostname === 'localhost' || hostname === '127.0.0.1';
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    const defaultPort = 3001;
+
+    // Helper: checks if a candidate URL points to localhost / 127.0.0.1
+    const isLocalAddress = (urlStr) => {
+      try {
+        const parsed = new URL(urlStr, window.location.href);
+        return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+      } catch {
+        return false;
+      }
+    };
+
     // 1. Check URL query param ?server=http://...
     const urlParams = new URLSearchParams(window.location.search);
     const paramServer = urlParams.get('server');
-    if (paramServer) return paramServer;
+    if (paramServer) {
+      if (isLocalhostClient || !isLocalAddress(paramServer)) {
+        return paramServer;
+      }
+      console.warn(`[NetworkManager] Remote client (${hostname}) ignored localhost ?server param: ${paramServer}`);
+    }
 
-    // 2. Check window override or Vite env
-    if (window.__MULTIPLAYER_SERVER_URL__) return window.__MULTIPLAYER_SERVER_URL__;
-    if (import.meta.env?.VITE_MULTIPLAYER_URL) return import.meta.env.VITE_MULTIPLAYER_URL;
+    // 2. Check window override
+    if (window.__MULTIPLAYER_SERVER_URL__) {
+      const overrideUrl = window.__MULTIPLAYER_SERVER_URL__;
+      if (isLocalhostClient || !isLocalAddress(overrideUrl)) {
+        return overrideUrl;
+      }
+      console.warn(`[NetworkManager] Remote client (${hostname}) ignored localhost window override: ${overrideUrl}`);
+    }
 
-    // 3. Dynamic hostname detection (works seamlessly across Wi-Fi & localhost)
-    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-    const hostname = window.location.hostname || 'localhost';
-    const defaultPort = 3001;
+    // 3. Check Vite env
+    if (import.meta.env?.VITE_MULTIPLAYER_URL) {
+      const envUrl = import.meta.env.VITE_MULTIPLAYER_URL;
+      if (isLocalhostClient || !isLocalAddress(envUrl)) {
+        return envUrl;
+      }
+      console.warn(`[NetworkManager] Remote client (${hostname}) ignored localhost VITE_MULTIPLAYER_URL: ${envUrl}`);
+    }
 
-    return `${protocol}//${hostname}:${defaultPort}`;
+    // 4. Dynamic hostname detection (works seamlessly across Wi-Fi & localhost)
+    // Remote clients accessing http://172.20.10.2:5173 automatically resolve to http://172.20.10.2:3001.
+    // Host laptop accessing http://localhost:5173 automatically resolves to http://localhost:3001.
+    const targetHost = isLocalhostClient ? 'localhost' : hostname;
+    return `${protocol}//${targetHost}:${defaultPort}`;
   }
 
   /**
    * Connect to the Socket.IO multiplayer server.
+   * @param {boolean} [forceNew=false] - Force reconnection even if already connected or connecting
    */
-  connect() {
+  connect(forceNew = false) {
     if (this.socket) {
-      if (this.socket.connected || this.state.status === 'connecting') {
+      if (!forceNew && (this.socket.connected || this.state.status === 'connecting')) {
         return;
       }
       this.socket.removeAllListeners();
+      if (this.socket.io) {
+        this.socket.io.removeAllListeners();
+      }
       this.socket.disconnect();
       this.socket = null;
     }
 
+    // Always dynamically re-resolve serverUrl on connection
+    this.serverUrl = this._resolveServerUrl();
+
     this._updateState({
       status: 'connecting',
       error: null,
+      serverUrl: this.serverUrl,
     });
 
     console.log(`[NetworkManager] Connecting to multiplayer server at ${this.serverUrl}...`);
@@ -122,8 +164,44 @@ export class NetworkManager {
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       timeout: 10000,
-      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      transports: ['polling', 'websocket'],
     });
+
+    // Manager events (reconnection lifecycle in Socket.IO v4)
+    if (this.socket.io) {
+      this.socket.io.on('reconnect_attempt', (attempt) => {
+        console.log(`[NetworkManager] Reconnecting attempt #${attempt} to ${this.serverUrl}...`);
+        this._updateState({
+          status: 'reconnecting',
+          error: null,
+        });
+      });
+
+      this.socket.io.on('reconnect', (attempt) => {
+        console.log(`[NetworkManager] Successfully reconnected after ${attempt} attempts!`);
+        this._updateState({
+          status: 'connected',
+          connected: true,
+          error: null,
+        });
+      });
+
+      this.socket.io.on('reconnect_error', (err) => {
+        this._updateState({
+          status: 'reconnecting',
+          error: err.message,
+        });
+      });
+
+      this.socket.io.on('reconnect_failed', () => {
+        this._updateState({
+          status: 'error',
+          connected: false,
+          error: 'Multiplayer server unreachable',
+        });
+      });
+    }
 
     // ── Connection lifecycle events ──────────────────────────────────────────
     this.socket.on('connect', () => {
@@ -292,7 +370,7 @@ export class NetworkManager {
       this._updateState({
         status: 'error',
         connected: false,
-        error: err.message,
+        error: err.message || 'Connection failed',
       });
     });
 
@@ -314,23 +392,34 @@ export class NetworkManager {
   joinGame(requestedUsername, boatLevel = 1, adminCode = '', coins = 0) {
     const username = requestedUsername || this.state.username || this.state.tempUsername || '';
     return new Promise((resolve) => {
+      let resolved = false;
+      const safeResolve = (val) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(val);
+        }
+      };
+
       if (!this.socket?.connected) {
         console.warn('[NetworkManager] Cannot join: socket not connected. Connecting first...');
-        this.connect();
-        // Wait up to 5s for connection
+        this.connect(true);
+        // Wait up to 6s for connection
         const checkConn = setInterval(() => {
           if (this.socket?.connected) {
             clearInterval(checkConn);
-            this._sendJoin(username, boatLevel, adminCode, coins, resolve);
+            this._sendJoin(username, boatLevel, adminCode, coins, safeResolve);
           }
         }, 100);
         setTimeout(() => {
           clearInterval(checkConn);
-          resolve({ success: false, error: 'Connection timeout' });
-        }, 5000);
+          safeResolve({
+            success: false,
+            error: 'Multiplayer server is currently unreachable. Please check connection and try again.',
+          });
+        }, 6000);
         return;
       }
-      this._sendJoin(username, boatLevel, adminCode, coins, resolve);
+      this._sendJoin(username, boatLevel, adminCode, coins, safeResolve);
     });
   }
 

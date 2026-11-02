@@ -99,7 +99,7 @@ function App() {
     };
   }, []);
   const handleReconnectMultiplayer = () => {
-    networkManager.connect();
+    networkManager.connect(true);
   };
 
   // ── Admin & Moderation System State ────────────────────────────

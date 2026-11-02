@@ -1,0 +1,26 @@
+[
+  {
+    "id": "rep_1793597150136_cac6v3",
+    "reportedUsername": "Aditya Deore",
+    "reportedPlayerId": "p_NzUNZDjW",
+    "reporterUsername": "Sir",
+    "reporterPlayerId": "p_NIXAOxTt",
+    "reason": "Inappropriate Behavior",
+    "description": "",
+    "status": "Pending",
+    "createdAt": 1793597150136,
+    "updatedAt": 1793597150136
+  },
+  {
+    "id": "rep_1793593429616_ywtww5",
+    "reportedUsername": "Deore",
+    "reportedPlayerId": "p_rw9SWMwb",
+    "reporterUsername": "Admin",
+    "reporterPlayerId": "p_Hkam1sDT",
+    "reason": "Inappropriate Behavior",
+    "description": "",
+    "status": "Reviewed",
+    "createdAt": 1793593429616,
+    "updatedAt": 1793593449699
+  }
+]

@@ -57,14 +57,23 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
   // Handle escape key to close & ensure mouse cursor is unlocked
   useEffect(() => {
     if (!isOpen) return;
-    if (typeof document !== 'undefined' && document.exitPointerLock) {
-      document.exitPointerLock();
-    }
+
+    const releasePointerLock = () => {
+      if (typeof document !== 'undefined' && document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+    };
+    releasePointerLock();
+    const lockWatcher = setInterval(releasePointerLock, 300);
+
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      clearInterval(lockWatcher);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [isOpen, onClose]);
 
   // Set default target when players change
@@ -160,10 +169,12 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
         e.stopPropagation();
         if (e.target === e.currentTarget) onClose();
       }}
+      onWheel={(e) => e.stopPropagation()}
     >
       <div
-        className="relative w-full max-w-4xl max-h-[90vh] flex flex-col rounded-3xl bg-[#061c2f]/95 border border-cyan-soft/30 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.9)] overflow-hidden anim-pop text-foam pointer-events-auto"
+        className="relative w-full max-w-4xl max-h-[86vh] flex flex-col rounded-3xl bg-[#061c2f]/95 border border-cyan-soft/30 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.9)] overflow-hidden anim-pop text-foam pointer-events-auto"
         onClick={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/5">
@@ -261,8 +272,11 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
           </div>
         )}
 
-        {/* Tab Body */}
-        <div className="flex-1 overflow-y-auto p-6 min-h-[380px]">
+        {/* Tab Body — vertically scrollable with clean scroll containment and wheel support */}
+        <div
+          className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 overscroll-contain select-text"
+          onWheel={(e) => e.stopPropagation()}
+        >
           {/* TAB 1: PLAYER MANAGEMENT */}
           {activeTab === 'players' && (
             <div className="space-y-4">
@@ -510,7 +524,7 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
 
           {/* TAB 3: PLAYER MODERATION */}
           {activeTab === 'moderation' && (
-            <div className="space-y-6 max-w-2xl mx-auto">
+            <div className="space-y-6 max-w-2xl mx-auto pb-8">
               {/* Target Player Selector */}
               <div className="p-4 rounded-2xl bg-black/30 border border-white/10 space-y-2">
                 <label htmlFor="target-player" className="block text-xs font-bold text-foam/80">
@@ -560,7 +574,7 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
                       key={preset}
                       type="button"
                       onClick={() => setWarnMessage(preset)}
-                      className="px-2.5 py-1 rounded-lg bg-black/30 hover:bg-black/50 border border-amber-400/20 text-amber-200/80 cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-black/30 hover:bg-black/50 border border-amber-400/20 text-amber-200/80 cursor-pointer transition-colors"
                     >
                       {preset}
                     </button>
@@ -594,6 +608,23 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
                   Instantly disconnects the target player from the game session and returns them to the main menu with the specified reason.
                 </p>
 
+                <div className="flex flex-wrap gap-1.5 text-[0.7rem]">
+                  {[
+                    'Disruptive behavior in multiplayer session.',
+                    'Harassment or unsportsmanlike conduct.',
+                    'Repeated collision / griefing.',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setKickReason(preset)}
+                      className="px-2.5 py-1 rounded-lg bg-black/30 hover:bg-black/50 border border-rose-400/20 text-rose-200/80 cursor-pointer transition-colors"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+
                 <input
                   type="text"
                   value={kickReason}
@@ -602,13 +633,16 @@ export function AdminPanel({ isOpen, onClose, localPlayerId }) {
                   className="w-full px-3.5 py-2.5 rounded-xl bg-ink-deep/90 border border-rose-400/30 text-foam text-xs font-medium focus:border-rose-300 focus:outline-none"
                 />
 
-                <button
-                  onClick={handleKickPlayer}
-                  disabled={!selectedTargetId}
-                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-extrabold text-xs cursor-pointer transition-colors shadow-lg"
-                >
-                  Kick Player
-                </button>
+                <div className="pt-1">
+                  <button
+                    onClick={handleKickPlayer}
+                    disabled={!selectedTargetId}
+                    className="w-full sm:w-auto px-6 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-extrabold text-xs cursor-pointer transition-colors shadow-lg flex items-center justify-center gap-2"
+                  >
+                    <span>👢</span>
+                    <span>Kick Player Now</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

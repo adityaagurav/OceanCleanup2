@@ -64,8 +64,15 @@ export class InputManager {
   _onKeyDown(e) {
     const action = this._mapKey(e.code);
     if (action) {
-      // Don't prevent default for browser tools or if target is a text input
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+      // Don't prevent default or capture gameplay keys if user is interacting with UI forms, dialogs, or text inputs
+      if (
+        e.target &&
+        (e.target.tagName === 'INPUT' ||
+         e.target.tagName === 'TEXTAREA' ||
+         e.target.tagName === 'SELECT' ||
+         e.target.isContentEditable ||
+         e.target.closest?.('[role="dialog"]'))
+      ) {
         return;
       }
       e.preventDefault();
@@ -109,6 +116,22 @@ export class InputManager {
   }
 
   _onWheel(e) {
+    // When pointer lock is not active, allow native trackpad and mousewheel scrolling
+    // over interactive UI overlays, modals, and scrollable panels (e.g. Admin Panel)
+    if (!this.isPointerLocked) {
+      const target = e.target;
+      if (
+        target instanceof Element &&
+        (target.closest('[role="dialog"]') ||
+         target.closest('.overflow-y-auto') ||
+         target.closest('.overflow-auto') ||
+         target.closest('.panel-dark') ||
+         target.closest('select, textarea, input, table, aside'))
+      ) {
+        return;
+      }
+    }
+
     e.preventDefault();
     this.scrollDelta += e.deltaY;
   }

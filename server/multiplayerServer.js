@@ -107,8 +107,8 @@ export class MultiplayerServer {
     // Socket.IO server with cross-origin support for LAN & local dev
     this.io = new SocketIOServer(this.httpServer, {
       cors: {
-        origin: '*', // Allow connections from localhost, LAN IPs (192.168.x.x), etc.
-        methods: ['GET', 'POST'],
+        origin: (origin, callback) => callback(null, true), // Dynamic origin reflection allows credentials across LAN & local dev
+        methods: ['GET', 'POST', 'OPTIONS'],
         credentials: true,
       },
       pingTimeout: 20000,
@@ -287,9 +287,13 @@ export class MultiplayerServer {
    * Simple HTTP request router (health check & status)
    */
   _handleHttpRequest(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    const origin = req.headers.origin || '*';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    if (origin !== '*') {
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);

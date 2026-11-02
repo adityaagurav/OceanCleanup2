@@ -30,11 +30,11 @@ export const GameplayFactPopup = memo(function GameplayFactPopup({
     <aside
       key={fact.id}
       aria-label="Ocean educational fact"
-      className="anim-pop hud-chip-strong p-3.5 border border-cyan-soft/30 rounded-2xl shadow-xl pointer-events-auto w-[min(21rem,calc(100vw-2rem))] relative overflow-hidden"
+      className="anim-pop panel-dark bg-[rgba(6,24,38,0.88)] backdrop-blur-md p-3.5 border border-cyan-soft/30 rounded-2xl shadow-[0_16px_40px_-12px_rgba(0,0,0,0.85)] pointer-events-auto w-[min(21rem,calc(100vw-2rem))] relative overflow-hidden"
     >
       {/* Top row: Category tag + dismiss button */}
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[0.66rem] font-bold tracking-wide uppercase bg-ocean/20 text-cyan-soft border border-cyan-soft/20">
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[0.66rem] font-bold tracking-wide uppercase bg-ocean/30 text-cyan-soft border border-cyan-soft/30">
           <span aria-hidden="true">{fact.emoji}</span>
           <span>{fact.categoryLabel}</span>
         </span>
@@ -48,22 +48,22 @@ export const GameplayFactPopup = memo(function GameplayFactPopup({
           tabIndex={-1}
           aria-label="Dismiss fact"
           title="Dismiss fact"
-          className="btn-ui focus-ring w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-foam/70 hover:text-foam text-xs flex items-center justify-center cursor-pointer"
+          className="btn-ui focus-ring w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-foam/80 hover:text-white text-xs flex items-center justify-center cursor-pointer transition-colors"
         >
           ✕
         </button>
       </div>
 
-      {/* Fact Title & Text */}
-      <h4 className="chip-value text-sm font-bold text-foam flex items-center gap-1.5">
+      {/* Fact Title & Text — high contrast for daytime and nighttime visibility */}
+      <h4 className="text-sm font-extrabold text-white flex items-center gap-1.5 tracking-tight drop-shadow-sm">
         {fact.title}
       </h4>
-      <p className="chip-text text-xs text-foam/90 leading-snug mt-1">
+      <p className="text-xs text-foam font-medium leading-relaxed mt-1 drop-shadow-sm">
         {fact.text}
       </p>
 
       {/* Subtle auto-dismiss timeout bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/10 overflow-hidden">
+      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/15 overflow-hidden">
         <div
           className="h-full bg-gradient-to-r from-cyan-soft to-aqua anim-fact-timeout"
           style={{ '--timeout-dur': `${duration}ms` }}

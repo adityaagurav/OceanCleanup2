@@ -36,7 +36,7 @@ export const MultiplayerStatusChip = memo(function MultiplayerStatusChip({ netwo
   const label = isOnline
     ? `${playerCount} ${playerCount === 1 ? 'Player' : 'Players'}`
     : isConnecting
-    ? 'Connecting...'
+    ? (status === 'reconnecting' ? 'Reconnecting...' : 'Connecting...')
     : 'Offline';
 
   return (
