@@ -29,7 +29,16 @@ const HOST = process.env.HOST || '0.0.0.0';
 const LEADERBOARD_FILE =
   process.env.LEADERBOARD_FILE || fileURLToPath(new URL('./leaderboard-data.json', import.meta.url));
 
-const server = new MultiplayerServer({ port: PORT, host: HOST, leaderboardFile: LEADERBOARD_FILE });
+// Persistent player reports survive server restarts
+const REPORTS_FILE =
+  process.env.REPORTS_FILE || fileURLToPath(new URL('./reports-data.json', import.meta.url));
+
+const server = new MultiplayerServer({
+  port: PORT,
+  host: HOST,
+  leaderboardFile: LEADERBOARD_FILE,
+  reportsFile: REPORTS_FILE,
+});
 
 server
   .start()

@@ -54,10 +54,15 @@ export class CameraController {
     this._initialized = false;
 
     // Boat-feel state: smoothed camera roll (into turns), smoothed speed FOV,
-    // and a scratch vector.
+    // and scratch vectors.
     this._camRoll = 0;
     this._fov     = GraphicsConfig.FOV;
     this._tmpV    = new THREE.Vector3();
+    this._idealOffset = new THREE.Vector3();
+    this._lookAtPos   = new THREE.Vector3();
+    this._idealPos    = new THREE.Vector3();
+    this._camForward  = new THREE.Vector3();
+    this._camRight    = new THREE.Vector3();
 
     this._onClick = () => {
       this.requestLock();
@@ -132,27 +137,27 @@ export class CameraController {
     const sinE = Math.sin(this._elevation);
 
     // Camera offset from look-at point (absolute angle, no charYaw dependency)
-    const offset = new THREE.Vector3(
+    this._idealOffset.set(
       this._distance * cosE * Math.sin(this._camYaw),
       this._distance * sinE,
       this._distance * cosE * Math.cos(this._camYaw),
     );
 
-    const lookAt  = charPosition.clone();
-    lookAt.y     += this._lookAtHeightOffset;
+    this._lookAtPos.copy(charPosition);
+    this._lookAtPos.y += this._lookAtHeightOffset;
 
     // Boat feel: tiny vertical bob + pitch-from-acceleration on the look-at.
     if (boatFeel) {
-      lookAt.y += (boatFeel.bob || 0) + (boatFeel.pitch || 0) * BoatConfig.CAMERA.PITCH_AMOUNT;
+      this._lookAtPos.y += (boatFeel.bob || 0) + (boatFeel.pitch || 0) * BoatConfig.CAMERA.PITCH_AMOUNT;
     }
-    if (lookAt.y < 0.2) lookAt.y = 0.2; // never look below the waterline
+    if (this._lookAtPos.y < 0.2) this._lookAtPos.y = 0.2; // never look below the waterline
 
-    const idealPos = lookAt.clone().add(offset);
-    if (idealPos.y < 0.5) idealPos.y = 0.5; // never clip into water
+    this._idealPos.copy(this._lookAtPos).add(this._idealOffset);
+    if (this._idealPos.y < 0.5) this._idealPos.y = 0.5; // never clip into water
 
     // ── 3. Exponential-decay spring (no jitter, cinematic) ──────────
     if (!this._initialized) {
-      this._springPos.copy(idealPos);
+      this._springPos.copy(this._idealPos);
       this._initialized = true;
     }
 
@@ -162,16 +167,16 @@ export class CameraController {
     const safeDelta = Math.min(Math.max(frameDelta, 0), 0.1);
     const t = 1 - Math.exp(-SPRING_FACTOR * lag * safeDelta);
     if (Number.isFinite(t) && t > 0) {
-      this._springPos.lerp(idealPos, t);
+      this._springPos.lerp(this._idealPos, t);
     } else {
-      this._springPos.copy(idealPos);
+      this._springPos.copy(this._idealPos);
     }
     if (!Number.isFinite(this._springPos.x)) {
-      this._springPos.copy(idealPos);
+      this._springPos.copy(this._idealPos);
     }
 
     this.camera.position.copy(this._springPos);
-    this.camera.lookAt(lookAt);
+    this.camera.lookAt(this._lookAtPos);
 
     // ── 4. Boat feel: roll into turns (smoothed) ───────────────────
     // lookAt() resets orientation every frame, so we simply re-apply the
@@ -227,7 +232,7 @@ export class CameraController {
     // Camera is at charPos + offset(camYaw). It looks TOWARD charPos.
     // So its forward is the direction FROM camera TO charPos:
     //   = -offset direction (flat) = (-sin(camYaw), 0, -cos(camYaw))
-    return new THREE.Vector3(
+    return this._camForward.set(
       -Math.sin(this._camYaw),
       0,
       -Math.cos(this._camYaw),
@@ -241,7 +246,7 @@ export class CameraController {
    * @returns {THREE.Vector3} normalized, Y = 0
    */
   getCameraRight() {
-    return new THREE.Vector3(
+    return this._camRight.set(
       Math.cos(this._camYaw),
       0,
       -Math.sin(this._camYaw),

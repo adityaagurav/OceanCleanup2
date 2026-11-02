@@ -36,6 +36,7 @@ export class NetworkManager {
       username: this._loadSavedUsername() || null,
       tempUsername: null,
       hasJoined: false,
+      isAdmin: false,
       localPlayer: null,
       players: [],        // Array of joined PlayerSession objects
       playerCount: 1,     // Total connected clients
@@ -135,9 +136,19 @@ export class NetworkManager {
       });
       this._startPingInterval();
 
-      // If we previously had joined and reconnected, rejoin automatically
-      if (this.state.hasJoined && this.state.username) {
-        this.joinGame(this.state.username, this.state.localPlayer?.boatLevel || 1);
+      // If we previously had an active joined session, automatically rejoin on reconnection
+      if (this._activeSession?.username) {
+        console.log(`[NetworkManager] Re-joining session as ${this._activeSession.username}...`);
+        this.joinGame(
+          this._activeSession.username,
+          this._activeSession.boatLevel || 1,
+          this._activeSession.adminCode || '',
+          this._activeSession.coins || 0
+        ).then((ack) => {
+          if (ack?.success) {
+            console.log(`[NetworkManager] Seamlessly rejoined session as ${ack.localPlayer?.username}`);
+          }
+        });
       }
     });
 
@@ -238,13 +249,41 @@ export class NetworkManager {
       this._emitEvent('boatCollision', payload);
     });
 
+    // ── Moderation & Admin Events ─────────────────────────────────
+    this.socket.on('player:warning', (payload) => {
+      this._emitEvent('playerWarning', payload);
+    });
+
+    this.socket.on('player:kicked', (payload) => {
+      this._activeSession = null;
+      this._updateState({ hasJoined: false, isAdmin: false });
+      this._emitEvent('playerKicked', payload);
+    });
+
+    this.socket.on('admin:init', (payload) => {
+      this._emitEvent('adminDataInit', payload);
+    });
+
+    this.socket.on('admin:players_update', (players) => {
+      this._emitEvent('adminPlayersUpdate', players);
+    });
+
+    this.socket.on('admin:reports_update', (reports) => {
+      this._emitEvent('adminReportsUpdate', reports);
+    });
+
     this.socket.on('disconnect', (reason) => {
       console.warn(`[NetworkManager] Disconnected: ${reason}`);
       this._stopPingInterval();
+      if (reason === 'io client disconnect') {
+        this._activeSession = null;
+      }
       this._updateState({
         status: reason === 'io client disconnect' ? 'disconnected' : 'reconnecting',
         connected: false,
         socketId: null,
+        hasJoined: false,
+        isAdmin: false,
       });
     });
 
@@ -268,9 +307,11 @@ export class NetworkManager {
    * Phase 2: Send player join request to the server.
    * @param {string} requestedUsername
    * @param {number} boatLevel
+   * @param {string} [adminCode]
+   * @param {number} [coins]
    * @returns {Promise<object>}
    */
-  joinGame(requestedUsername, boatLevel = 1) {
+  joinGame(requestedUsername, boatLevel = 1, adminCode = '', coins = 0) {
     const username = requestedUsername || this.state.username || this.state.tempUsername || '';
     return new Promise((resolve) => {
       if (!this.socket?.connected) {
@@ -280,7 +321,7 @@ export class NetworkManager {
         const checkConn = setInterval(() => {
           if (this.socket?.connected) {
             clearInterval(checkConn);
-            this._sendJoin(username, boatLevel, resolve);
+            this._sendJoin(username, boatLevel, adminCode, coins, resolve);
           }
         }, 100);
         setTimeout(() => {
@@ -289,19 +330,26 @@ export class NetworkManager {
         }, 5000);
         return;
       }
-      this._sendJoin(username, boatLevel, resolve);
+      this._sendJoin(username, boatLevel, adminCode, coins, resolve);
     });
   }
 
-  _sendJoin(username, boatLevel, resolve) {
+  _sendJoin(username, boatLevel, adminCode, coins, resolve) {
     this.socket.emit(
       'player:join',
-      { username, boatLevel },
+      { username, boatLevel, adminCode, coins },
       (ack) => {
         if (ack?.success) {
+          this._activeSession = {
+            username: ack.localPlayer.username,
+            boatLevel,
+            adminCode,
+            coins,
+          };
           this._saveUsername(ack.localPlayer.username);
           this._updateState({
             hasJoined: true,
+            isAdmin: !!ack.localPlayer.isAdmin,
             localPlayer: ack.localPlayer,
             username: ack.localPlayer.username,
             playerId: ack.localPlayer.playerId,
@@ -344,6 +392,7 @@ export class NetworkManager {
    */
   disconnect() {
     this._stopPingInterval();
+    this._activeSession = null;
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
@@ -454,6 +503,86 @@ export class NetworkManager {
     if (this.socket?.connected) {
       this.socket.emit('game:sync', data);
     }
+  }
+
+  /**
+   * Sync local coin balance with the server for admin console visibility.
+   */
+  syncCoins(coins) {
+    if (this.socket?.connected) {
+      this.socket.emit('player:sync_coins', { coins: Number(coins) || 0 });
+    }
+  }
+
+  /**
+   * Report another player (accessible to all joined players).
+   */
+  reportPlayer({ reportedUsername, reportedPlayerId = '', reason, description = '' }) {
+    if (!this.socket?.connected) return Promise.resolve({ success: false, error: 'not-connected' });
+    return new Promise((resolve) => {
+      this.socket.emit(
+        'admin:report_player',
+        { reportedUsername, reportedPlayerId, reason, description },
+        (ack) => resolve(ack || { success: false, error: 'no-ack' })
+      );
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), 4000);
+    });
+  }
+
+  /**
+   * Fetch admin console dataset: all connected players + all saved reports.
+   */
+  getAdminData() {
+    if (!this.socket?.connected) return Promise.resolve({ success: false, error: 'not-connected' });
+    return new Promise((resolve) => {
+      this.socket.emit('admin:get_data', (ack) => resolve(ack || { success: false, error: 'no-ack' }));
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), 4000);
+    });
+  }
+
+  /**
+   * Update moderation report status ('Pending' | 'Reviewed' | 'Resolved').
+   */
+  updateReportStatus(reportId, status) {
+    if (!this.socket?.connected) return Promise.resolve({ success: false, error: 'not-connected' });
+    return new Promise((resolve) => {
+      this.socket.emit(
+        'admin:update_report',
+        { reportId, status },
+        (ack) => resolve(ack || { success: false, error: 'no-ack' })
+      );
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), 4000);
+    });
+  }
+
+  /**
+   * Issue an in-game administrative warning to a player.
+   */
+  warnPlayer(targetPlayerId, message) {
+    if (!this.socket?.connected) return Promise.resolve({ success: false, error: 'not-connected' });
+    return new Promise((resolve) => {
+      this.socket.emit(
+        'admin:warn_player',
+        { targetPlayerId, message },
+        (ack) => resolve(ack || { success: false, error: 'no-ack' })
+      );
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), 4000);
+    });
+  }
+
+  /**
+   * Kick a player from the active multiplayer session.
+   */
+  kickPlayer(targetPlayerId, reason) {
+    if (!this.socket?.connected) return Promise.resolve({ success: false, error: 'not-connected' });
+    return new Promise((resolve) => {
+      this.socket.emit(
+        'admin:kick_player',
+        { targetPlayerId, reason },
+        (ack) => resolve(ack || { success: false, error: 'no-ack' })
+      );
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), 4000);
+    });
   }
 }
 

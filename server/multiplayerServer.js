@@ -2,6 +2,9 @@ import http from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import { BoatCollisionSystem } from '../src/physics/BoatCollisionSystem.js';
 import { LeaderboardStore } from './LeaderboardStore.js';
+import { ReportStore } from './ReportStore.js';
+
+export const DEFAULT_ADMIN_CODE = process.env.ADMIN_CODE || process.env.ADMIN_ACCESS_CODE || 'oceanAdmin2026';
 
 // ── Recycling points (server-authoritative) ────────────────────────────────
 // Points are ONLY earned by recycling garbage items at the harbour, always
@@ -92,6 +95,10 @@ export class MultiplayerServer {
     // file-backed in production via `leaderboardFile`, in-memory in tests).
     this._leaderboard = options.leaderboardStore || new LeaderboardStore({ file: options.leaderboardFile });
 
+    // Admin authentication & persistent moderation reports store
+    this.adminAccessCode = String(options.adminAccessCode || DEFAULT_ADMIN_CODE);
+    this._reports = options.reportStore || new ReportStore({ file: options.reportsFile || options.reportsDataFile });
+
     // HTTP server for health check and Socket.IO handshake
     this.httpServer = http.createServer((req, res) => {
       this._handleHttpRequest(req, res);
@@ -163,28 +170,113 @@ export class MultiplayerServer {
   }
 
   /**
+   * Return formatted player management data for all joined players (admin-only).
+   */
+  getAdminPlayersList() {
+    return Array.from(this.players.values())
+      .filter((p) => p.hasJoined)
+      .map((p) => ({
+        socketId: p.socketId,
+        playerId: p.playerId,
+        username: p.username,
+        isAdmin: !!p.isAdmin,
+        status: 'Online',
+        boatLevel: p.boatLevel || 1,
+        coins: p.coins || 0,
+        points: p.points || 0,
+        connectedAt: p.connectedAt,
+      }));
+  }
+
+  /**
+   * Broadcast real-time player updates to all authenticated admin sockets.
+   */
+  broadcastAdminUpdate() {
+    this.io.to('admin_channel').emit('admin:players_update', this.getAdminPlayersList());
+  }
+
+  /**
+   * Generate a random guest callsign guaranteed not to collide with an active player.
+   */
+  generateUniqueGuestName() {
+    let name = generateGuestName();
+    let attempts = 0;
+    while (
+      attempts < 50 &&
+      Array.from(this.players.values()).some((p) => p.hasJoined && p.username.toLowerCase() === name.toLowerCase())
+    ) {
+      name = generateGuestName();
+      attempts += 1;
+    }
+    return name;
+  }
+
+  /**
+   * Validate requested username and admin credentials.
+   * - Enforces case-insensitive uniqueness across active joined players.
+   * - Reserves "admin" strictly for authenticated administrators.
+   * - Rejects duplicates with an explicit error.
+   */
+  validateAndResolveUsername(requestedName, currentSocketId, adminCode) {
+    const raw = typeof requestedName === 'string' ? requestedName.trim() : '';
+
+    // Admin authentication
+    if (raw.toLowerCase() === 'admin') {
+      if (!adminCode || String(adminCode) !== this.adminAccessCode) {
+        return { valid: false, error: 'invalid-admin-code', message: 'Invalid Admin Access Code' };
+      }
+      for (const [sId, p] of this.players.entries()) {
+        if (p.hasJoined && sId !== currentSocketId && p.username.toLowerCase() === 'admin') {
+          const oldSock = this.io?.sockets?.sockets?.get?.(sId);
+          if (!oldSock || !oldSock.connected) {
+            this.players.delete(sId);
+          } else {
+            return { valid: false, error: 'username-taken', message: 'Admin is already online' };
+          }
+        }
+      }
+      return { valid: true, username: 'Admin', isAdmin: true };
+    }
+
+    // Normal player
+    let sanitized = sanitizeUsername(raw);
+    if (sanitized.toLowerCase() === 'admin') {
+      return { valid: false, error: 'reserved-username', message: 'The username "admin" is reserved' };
+    }
+
+    if (!sanitized || sanitized.length < 2) {
+      sanitized = this.generateUniqueGuestName();
+    } else {
+      for (const [sId, p] of this.players.entries()) {
+        if (p.hasJoined && sId !== currentSocketId && p.username.toLowerCase() === sanitized.toLowerCase()) {
+          const oldSock = this.io?.sockets?.sockets?.get?.(sId);
+          if (!oldSock || !oldSock.connected) {
+            // Stale un-graceful disconnect: clean up so reconnecting player can claim their name
+            this.players.delete(sId);
+          } else {
+            return { valid: false, error: 'username-taken', message: `Username "${sanitized}" is already taken` };
+          }
+        }
+      }
+    }
+
+    return { valid: true, username: sanitized, isAdmin: false };
+  }
+
+  /**
    * Resolve a unique username among active joined players
    */
   resolveUniqueUsername(requestedName, currentSocketId) {
-    let name = sanitizeUsername(requestedName);
-    if (!name || name.length < 2) {
-      name = generateGuestName();
-    }
-
-    const takenNames = new Set(
-      Array.from(this.players.values())
-        .filter((p) => p.hasJoined && p.socketId !== currentSocketId)
-        .map((p) => p.username.toLowerCase())
-    );
-
-    if (!takenNames.has(name.toLowerCase())) {
-      return name;
-    }
-
-    // Append _2, _3, etc. if name is already taken
+    const res = this.validateAndResolveUsername(requestedName, currentSocketId);
+    if (res.valid) return res.username;
+    let name = sanitizeUsername(requestedName) || generateGuestName();
     let suffix = 2;
     let candidate = `${name}_${suffix}`;
-    while (takenNames.has(candidate.toLowerCase())) {
+    while (
+      Array.from(this.players.values()).some(
+        (p) => p.hasJoined && p.socketId !== currentSocketId && p.username.toLowerCase() === candidate.toLowerCase()
+      )
+    ) {
       suffix += 1;
       candidate = `${name}_${suffix}`;
     }
@@ -340,6 +432,38 @@ export class MultiplayerServer {
     socket.on('game:sync', (data) => {
       this._handleGameSyncStub(socket, data);
     });
+
+    // ── Admin: Reports & Moderation ────────────────────────────────
+    socket.on('admin:report_player', (data, ack) => {
+      this._handleReportPlayer(socket, data, ack);
+    });
+
+    socket.on('admin:get_data', (ack) => {
+      this._handleAdminGetData(socket, ack);
+    });
+
+    socket.on('admin:update_report', (data, ack) => {
+      this._handleAdminUpdateReport(socket, data, ack);
+    });
+
+    socket.on('admin:warn_player', (data, ack) => {
+      this._handleAdminWarnPlayer(socket, data, ack);
+    });
+
+    socket.on('admin:kick_player', (data, ack) => {
+      this._handleAdminKickPlayer(socket, data, ack);
+    });
+
+    socket.on('player:sync_coins', (data) => {
+      const session = this.players.get(socket.id);
+      if (session && typeof data?.coins === 'number' && Number.isFinite(data.coins)) {
+        const newCoins = Math.max(0, Math.floor(data.coins));
+        if (session.coins !== newCoins) {
+          session.coins = newCoins;
+          this.broadcastAdminUpdate();
+        }
+      }
+    });
   }
 
   /**
@@ -354,14 +478,31 @@ export class MultiplayerServer {
 
     session.lastSeen = Date.now();
 
-    // Resolve username (handle duplicates & sanitize)
-    const finalUsername = this.resolveUniqueUsername(data.username, socket.id);
-    session.username = finalUsername;
+    // 1. Resolve and validate username & admin credentials
+    const resolution = this.validateAndResolveUsername(data.username, socket.id, data.adminCode);
+    if (!resolution.valid) {
+      if (typeof ack === 'function') {
+        ack({ success: false, error: resolution.error, message: resolution.message });
+      }
+      return;
+    }
+
+    session.username = resolution.username;
+    session.isAdmin = resolution.isAdmin;
+    if (session.isAdmin) {
+      socket.join('admin_channel');
+    }
+
+    if (typeof data.coins === 'number' && Number.isFinite(data.coins)) {
+      session.coins = Math.max(0, Math.floor(data.coins));
+    } else if (session.coins == null) {
+      session.coins = 0;
+    }
 
     // Lifetime recycling points follow the player's identity and are NEVER
     // reset by disconnects (the store keeps them; the file keeps them across
     // restarts). Clients only receive this balance — they cannot set it.
-    session.points = this._leaderboard.getPoints(finalUsername);
+    session.points = this._leaderboard.getPoints(resolution.username);
 
     // Assign color theme and mooring berth if not already assigned
     if (!session.color) {
@@ -394,13 +535,16 @@ export class MultiplayerServer {
     session.hasJoined = true;
 
     console.log(
-      `[MultiplayerServer] Player joined: "${session.username}" (${session.playerId}) | Color: ${session.color.name} | Berth: (${session.berth.x}, ${session.berth.z})`
+      `[MultiplayerServer] Player joined: "${session.username}" (${session.playerId})${session.isAdmin ? ' [ADMIN]' : ''} | Color: ${session.color.name} | Berth: (${session.berth.x}, ${session.berth.z})`
     );
 
     const publicSession = {
       socketId: session.socketId,
       playerId: session.playerId,
       username: session.username,
+      isAdmin: !!session.isAdmin,
+      coins: session.coins || 0,
+      points: session.points || 0,
       color: session.color,
       berth: session.berth,
       boatLevel: session.boatLevel || 1,
@@ -429,7 +573,15 @@ export class MultiplayerServer {
       ack(responsePayload);
     }
 
-    // 2. If this is a fresh join (not just a rename), broadcast to other clients
+    // 2. If this is an admin, send initial admin data
+    if (session.isAdmin) {
+      socket.emit('admin:init', {
+        players: this.getAdminPlayersList(),
+        reports: this._reports.getReports(),
+      });
+    }
+
+    // 3. If this is a fresh join (not just a rename), broadcast to other clients
     if (!wasAlreadyJoined) {
       socket.broadcast.emit('player:joined', {
         player: publicSession,
@@ -437,12 +589,15 @@ export class MultiplayerServer {
       });
     }
 
-    // 3. Broadcast updated full player list to all clients
+    // 4. Broadcast updated full player list to all clients
     this.io.emit('players:list', { players: this.getJoinedPlayers() });
 
-    // 4. Broadcast the latest leaderboard so the joiner AND everyone else
+    // 5. Broadcast the latest leaderboard so the joiner AND everyone else
     //    see identical rankings immediately (late joiners get it here).
     this._broadcastLeaderboard();
+
+    // 6. Broadcast updated players list to admin channel
+    this.broadcastAdminUpdate();
   }
 
   /**
@@ -485,6 +640,8 @@ export class MultiplayerServer {
       this.io.emit('players:list', { players: this.getJoinedPlayers() });
       // Rankings change when a player leaves the session board
       this._broadcastLeaderboard();
+      // Update admin console with real-time player list
+      this.broadcastAdminUpdate();
     }
   }
 
@@ -692,6 +849,7 @@ export class MultiplayerServer {
 
     // Everyone sees the same new rankings immediately.
     this._broadcastLeaderboard();
+    this.broadcastAdminUpdate();
 
     return reply({ success: true, itemCount, kg: itemCount, points, totalPoints: session.points, transactionId });
   }
@@ -818,6 +976,181 @@ export class MultiplayerServer {
         });
       }
     }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Admin & Moderation Handlers
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Submit a player report (accessible to any joined player).
+   */
+  _handleReportPlayer(socket, data = {}, ack) {
+    const session = this.players.get(socket.id);
+    const reply = (res) => {
+      if (typeof ack === 'function') ack(res);
+    };
+
+    if (!session || !session.hasJoined) {
+      return reply({ success: false, error: 'not-joined', message: 'Must be joined to report a player' });
+    }
+
+    const reportedUsername = typeof data.reportedUsername === 'string' ? data.reportedUsername.trim() : '';
+    const reason = typeof data.reason === 'string' ? data.reason.trim() : '';
+    if (!reportedUsername || !reason) {
+      return reply({ success: false, error: 'invalid-input', message: 'Reported username and reason are required' });
+    }
+
+    const report = this._reports.addReport({
+      reportedUsername,
+      reportedPlayerId: data.reportedPlayerId || '',
+      reporterUsername: session.username,
+      reporterPlayerId: session.playerId,
+      reason,
+      description: data.description || '',
+    });
+
+    // Real-time broadcast to connected administrators
+    this.io.to('admin_channel').emit('admin:reports_update', this._reports.getReports());
+
+    console.log(`[MultiplayerServer] Report filed against "${reportedUsername}" by "${session.username}": ${reason}`);
+    return reply({ success: true, report });
+  }
+
+  /**
+   * Retrieve full admin console state (authenticated admins only).
+   */
+  _handleAdminGetData(socket, ack) {
+    const session = this.players.get(socket.id);
+    const reply = (res) => {
+      if (typeof ack === 'function') ack(res);
+    };
+
+    if (!session || !session.isAdmin) {
+      return reply({ success: false, error: 'unauthorized', message: 'Admin permissions required' });
+    }
+
+    return reply({
+      success: true,
+      players: this.getAdminPlayersList(),
+      reports: this._reports.getReports(),
+    });
+  }
+
+  /**
+   * Update report status (authenticated admins only).
+   */
+  _handleAdminUpdateReport(socket, data = {}, ack) {
+    const session = this.players.get(socket.id);
+    const reply = (res) => {
+      if (typeof ack === 'function') ack(res);
+    };
+
+    if (!session || !session.isAdmin) {
+      return reply({ success: false, error: 'unauthorized', message: 'Admin permissions required' });
+    }
+
+    const updated = this._reports.updateStatus(data.reportId, data.status);
+    if (!updated) {
+      return reply({ success: false, error: 'report-not-found', message: 'Report not found or invalid status' });
+    }
+
+    this.io.to('admin_channel').emit('admin:reports_update', this._reports.getReports());
+    return reply({ success: true, report: updated });
+  }
+
+  /**
+   * Issue an in-game warning to a player (authenticated admins only).
+   */
+  _handleAdminWarnPlayer(socket, data = {}, ack) {
+    const session = this.players.get(socket.id);
+    const reply = (res) => {
+      if (typeof ack === 'function') ack(res);
+    };
+
+    if (!session || !session.isAdmin) {
+      return reply({ success: false, error: 'unauthorized', message: 'Admin permissions required' });
+    }
+
+    const targetPlayerId = data.targetPlayerId;
+    let targetSocket = null;
+    let targetSession = null;
+
+    for (const [sId, p] of this.players.entries()) {
+      if (p.playerId === targetPlayerId) {
+        targetSocket = this.io.sockets.sockets.get(sId);
+        targetSession = p;
+        break;
+      }
+    }
+
+    if (!targetSession || !targetSocket) {
+      return reply({ success: false, error: 'player-not-found', message: 'Player is no longer online' });
+    }
+
+    const message = typeof data.message === 'string' && data.message.trim()
+      ? data.message.trim()
+      : 'Please follow community rules and play fairly.';
+
+    targetSocket.emit('player:warning', {
+      message,
+      adminUsername: session.username,
+      timestamp: Date.now(),
+    });
+
+    console.log(`[MultiplayerServer] Admin "${session.username}" issued warning to "${targetSession.username}": ${message}`);
+    return reply({ success: true });
+  }
+
+  /**
+   * Kick a player from the multiplayer session (authenticated admins only).
+   */
+  _handleAdminKickPlayer(socket, data = {}, ack) {
+    const session = this.players.get(socket.id);
+    const reply = (res) => {
+      if (typeof ack === 'function') ack(res);
+    };
+
+    if (!session || !session.isAdmin) {
+      return reply({ success: false, error: 'unauthorized', message: 'Admin permissions required' });
+    }
+
+    const targetPlayerId = data.targetPlayerId;
+    if (targetPlayerId === session.playerId) {
+      return reply({ success: false, error: 'cannot-kick-self', message: 'Cannot kick yourself' });
+    }
+
+    let targetSocket = null;
+    let targetSession = null;
+
+    for (const [sId, p] of this.players.entries()) {
+      if (p.playerId === targetPlayerId) {
+        targetSocket = this.io.sockets.sockets.get(sId);
+        targetSession = p;
+        break;
+      }
+    }
+
+    if (!targetSession || !targetSocket) {
+      return reply({ success: false, error: 'player-not-found', message: 'Player is no longer online' });
+    }
+
+    const reason = typeof data.reason === 'string' && data.reason.trim()
+      ? data.reason.trim()
+      : 'Kicked by administrator';
+
+    targetSocket.emit('player:kicked', {
+      reason,
+      adminUsername: session.username,
+      timestamp: Date.now(),
+    });
+
+    console.log(`[MultiplayerServer] Admin "${session.username}" kicked "${targetSession.username}". Reason: ${reason}`);
+
+    // Disconnect socket from namespace
+    targetSocket.disconnect(true);
+
+    return reply({ success: true });
   }
 
   /**

@@ -20,6 +20,12 @@ import { BoatConfig } from '../config/BoatConfig.js';
  *     - Remote players are never confused with local player controls.
  *     - Disconnection and state transitions are strictly leak-free.
  */
+const _lerpAngle = (curr, target, alpha) => {
+  let diff = target - curr;
+  diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  return curr + diff * alpha;
+};
+
 export class RemotePlayerManager {
   constructor(scene, waveSampler) {
     this.scene = scene;
@@ -484,12 +490,6 @@ export class RemotePlayerManager {
     this._time += fd;
     if (!this.remoteEntities || this.remoteEntities.size === 0) return;
 
-    const lerpAngle = (curr, target, alpha) => {
-      let diff = target - curr;
-      diff = ((diff + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
-      return curr + diff * alpha;
-    };
-
     for (const [, entry] of this.remoteEntities.entries()) {
       try {
         const { state, currentPos, targetPos } = entry;
@@ -516,7 +516,7 @@ export class RemotePlayerManager {
           }
 
           currentPos.lerp(targetPos, Math.min(1, fd * 12));
-          entry.currentYaw = lerpAngle(entry.currentYaw, entry.targetYaw, Math.min(1, fd * 12));
+          entry.currentYaw = _lerpAngle(entry.currentYaw, entry.targetYaw, Math.min(1, fd * 12));
 
           const x = currentPos.x;
           const z = currentPos.z;
@@ -535,7 +535,7 @@ export class RemotePlayerManager {
         } else {
           // ── Remote Human Character Harbor Walk & Animation ─────────────
           currentPos.lerp(targetPos, Math.min(1, fd * 14));
-          entry.currentYaw = lerpAngle(entry.currentYaw, entry.targetYaw, Math.min(1, fd * 14));
+          entry.currentYaw = _lerpAngle(entry.currentYaw, entry.targetYaw, Math.min(1, fd * 14));
 
           entry.characterGroup.position.set(currentPos.x, currentPos.y, currentPos.z);
           entry.characterGroup.rotation.y = entry.currentYaw;

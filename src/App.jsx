@@ -4,6 +4,10 @@ import Settings      from './ui/Settings';
 import HowToPlay     from './ui/HowToPlay';
 import Credits       from './ui/Credits';
 import HUD           from './ui/HUD';
+import { AdminPanel } from './ui/AdminPanel';
+import { ReportPlayerModal } from './ui/ReportPlayerModal';
+import { WarningModal } from './ui/WarningModal';
+import { KickedModal } from './ui/KickedModal';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { Engine }    from './engine/Engine.js';
 import { soundFx }   from './audio/AudioManager';
@@ -97,6 +101,53 @@ function App() {
   const handleReconnectMultiplayer = () => {
     networkManager.connect();
   };
+
+  // ── Admin & Moderation System State ────────────────────────────
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [adminWarning, setAdminWarning] = useState(null); // { message, adminUsername, timestamp }
+  const [kickedNotice, setKickedNotice] = useState(null); // { reason, adminUsername, timestamp }
+
+  useEffect(() => {
+    const unsubWarning = networkManager.on('playerWarning', (payload) => {
+      soundFx?.playAlert?.();
+      if (typeof document !== 'undefined' && document.exitPointerLock) {
+        document.exitPointerLock();
+      }
+      setAdminWarning(payload);
+    });
+    const unsubKicked = networkManager.on('playerKicked', (payload) => {
+      if (typeof document !== 'undefined' && document.exitPointerLock) {
+        document.exitPointerLock();
+      }
+      setKickedNotice(payload);
+    });
+    return () => {
+      unsubWarning();
+      unsubKicked();
+    };
+  }, []);
+
+  const handleOpenAdminPanel = () => {
+    if (typeof document !== 'undefined' && document.exitPointerLock) {
+      document.exitPointerLock();
+    }
+    setIsAdminPanelOpen(true);
+  };
+
+  const handleOpenReportModal = () => {
+    if (typeof document !== 'undefined' && document.exitPointerLock) {
+      document.exitPointerLock();
+    }
+    setIsReportModalOpen(true);
+  };
+
+  // Sync coins with server for admin monitoring
+  useEffect(() => {
+    if (networkState.hasJoined && typeof progression.coins === 'number') {
+      networkManager.syncCoins(progression.coins);
+    }
+  }, [progression.coins, networkState.hasJoined]);
 
   // ── Ocean Education Facts System ──────────────────────────────
   const [gameplayFact, setGameplayFact] = useState(null);
@@ -445,12 +496,28 @@ function App() {
     engineRef.current?.stopFishing();
   };
 
-  /** Start game with specified guest username and join multiplayer */
-  const handleStartGame = (username) => {
+  /** Start game with specified guest username, adminCode and join multiplayer */
+  const handleStartGame = async (username, adminCode = '') => {
     if (username) {
-      networkManager.joinGame(username, progression.boatLevel || 1);
+      const res = await networkManager.joinGame(
+        username,
+        progression.boatLevel || 1,
+        adminCode,
+        progression.coins || 0
+      );
+      if (res && res.success === false) {
+        return res;
+      }
     }
     navigate('GAME');
+    return { success: true };
+  };
+
+  const handleReturnToMenuFromKick = () => {
+    setKickedNotice(null);
+    networkManager.disconnect();
+    setTimeout(() => networkManager.connect(), 400);
+    navigate('MENU');
   };
 
   // Automatically join multiplayer when in active game session if not already joined
@@ -555,6 +622,7 @@ function App() {
         <div
           className="w-full h-full relative cursor-grab active:cursor-grabbing"
           onClick={() => {
+            if (isAdminPanelOpen || isReportModalOpen || adminWarning || kickedNotice || isPaused) return;
             if (typeof window !== 'undefined' && window.focus) window.focus();
             engineRef.current?.camera_ctrl?.requestLock?.();
           }}
@@ -600,6 +668,9 @@ function App() {
             onStopFishing={handleStopFishing}
             networkState={networkState}
             onReconnectMultiplayer={handleReconnectMultiplayer}
+            isAdmin={networkState?.isAdmin}
+            onOpenAdminPanel={handleOpenAdminPanel}
+            onOpenReportModal={handleOpenReportModal}
           />
 
           {isPaused && (
@@ -628,6 +699,33 @@ function App() {
         </div>
       )}
       </div>
+
+      {/* Admin Console Overlay (Admin only) */}
+      <AdminPanel
+        isOpen={isAdminPanelOpen}
+        onClose={() => setIsAdminPanelOpen(false)}
+        localPlayerId={networkState?.playerId}
+      />
+
+      {/* Report Player Modal (All players) */}
+      <ReportPlayerModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        players={networkState?.players || []}
+        localPlayerId={networkState?.playerId}
+      />
+
+      {/* In-game warning notification */}
+      <WarningModal
+        warning={adminWarning}
+        onDismiss={() => setAdminWarning(null)}
+      />
+
+      {/* Disconnect kick notice */}
+      <KickedModal
+        kickedNotice={kickedNotice}
+        onReturnToMenu={handleReturnToMenuFromKick}
+      />
 
       {/* Screen-transition overlay — dips to soft dark, then reveals the new
           screen. Single compositor-only opacity transition; pointer-events

@@ -60,6 +60,8 @@ export class BoatController {
     this.prevRotationY = this.boat.rotation.y;
 
     this._ray = new THREE.Raycaster();
+    this._travel = new THREE.Vector3();
+    this._probeOrigin = new THREE.Vector3();
   }
 
   /**
@@ -93,21 +95,22 @@ export class BoatController {
     this.physicsRotationY = ((this.physicsRotationY + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
 
     // --- 2. Apply movement ---
-    // Move forward in the direction the boat is facing (local -Z).
-    const forward = new THREE.Vector3(0, 0, -1);
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.physicsRotationY);
-    forward.applyQuaternion(q);
-
-    const travel = forward.clone().multiplyScalar(Math.sign(this.speed));
+    // Fast analytical forward vector in XZ plane (local -Z rotated by yaw)
+    // Avoids 4 allocations (3 Vector3s + 1 Quaternion) on every physics step
+    const fwdX = -Math.sin(this.physicsRotationY);
+    const fwdZ = -Math.cos(this.physicsRotationY);
+    const sign = Math.sign(this.speed);
+    this._travel.set(fwdX * sign, 0, fwdZ * sign);
     const moveDist = Math.abs(this.speed) * dt;
 
     // Collide with docks, harbour walls and land — never with the open water.
     // The boat bumps and holds against the pier instead of driving through it.
-    if (moveDist > 0.0001 && this._collisionBlocks(travel, moveDist)) {
+    if (moveDist > 0.0001 && this._collisionBlocks(this._travel, moveDist)) {
       this.speed = 0;
       this.inertia.halt();
     } else {
-      this.physicsPosition.add(travel.multiplyScalar(moveDist));
+      this.physicsPosition.x += this._travel.x * moveDist;
+      this.physicsPosition.z += this._travel.z * moveDist;
     }
 
     // --- 2.5 Phase 3B: Apply lateral deflection velocity & water drag damping ---
@@ -235,9 +238,9 @@ export class BoatController {
    */
   _collisionBlocks(dir, moveDist) {
     if (!this.colliders || this.colliders.length === 0) return false;
-    const origin = this.physicsPosition.clone();
-    origin.y = 0.3; // just above the bob range, at dock height
-    this._ray.set(origin, dir);
+    this._probeOrigin.copy(this.physicsPosition);
+    this._probeOrigin.y = 0.3; // just above the bob range, at dock height
+    this._ray.set(this._probeOrigin, dir);
     const hits = this._ray.intersectObjects(this.colliders, false);
     const stopDistance = moveDist + this.hullHalfLength; // scale collision margin with upgraded hull
     return hits.length > 0 && hits[0].distance < stopDistance;

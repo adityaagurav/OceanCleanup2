@@ -113,15 +113,18 @@ export class Engine {
       antialias: q.ANTIALIAS,
       powerPreference: 'high-performance',
     });
-    // Adaptive resolution governor: start at 1.0 and let the frame-time meter
-    // push the pixel ratio up (fast machines) or down (weak GPUs) so the game
-    // stays smooth everywhere instead of lagging at a fixed ratio.
+    // Controlled, reversible render scale: starts at the intended preset target.
+    // Preserves visual fidelity by never dropping below 1.0 (sub-pixel downsampling),
+    // and recovers fully to max quality when frame times return to budget.
+    const maxRatio = Math.min(window.devicePixelRatio || 1, q.MAX_PIXEL_RATIO);
     this._resScale = {
-      target: 1.0,
-      min: 0.65,
-      max: Math.min(window.devicePixelRatio, q.MAX_PIXEL_RATIO),
+      target: maxRatio,
+      min: Math.min(1.0, maxRatio),
+      max: maxRatio,
       acc: 0,
       frames: 0,
+      consecutiveSlow: 0,
+      consecutiveFast: 0,
     };
     this.renderer.setPixelRatio(this._resScale.target);
     this.renderer.setSize(w, h);
@@ -297,6 +300,8 @@ export class Engine {
     const e = gc.SHADOW_EXTENT;
     this.sunLight.shadow.camera.left   = -e; this.sunLight.shadow.camera.right  = e;
     this.sunLight.shadow.camera.top    =  e; this.sunLight.shadow.camera.bottom = -e;
+    this.sunLight.target = new THREE.Object3D();
+    this.scene.add(this.sunLight.target);
     this.scene.add(this.sunLight);
 
     // Cool, dim moon light — the TimeSystem controls its position/intensity
@@ -600,20 +605,38 @@ export class Engine {
    */
   _applyAdaptiveResolution(frameDelta) {
     const s = this._resScale;
-    s.acc += frameDelta;
+    // Clamp individual frame delta to 50ms so a single hitch or tab switch
+    // does not bias the window average.
+    s.acc += Math.min(frameDelta, 0.05);
     s.frames += 1;
-    if (s.acc < 0.5) return;
+    if (s.acc < 0.75) return; // Sample over ~0.75s window
 
     const avg = s.acc / s.frames;
     s.acc = 0;
     s.frames = 0;
 
     let next = s.target;
-    if (avg > 0.021) {           // under ~47 fps → scale down
-      next = Math.max(s.min, s.target - 0.25);
-    } else if (avg < 0.014) {    // over ~70 fps → scale up
-      next = Math.min(s.max, s.target + 0.25);
+    if (avg > 0.033) {
+      // Under ~30 fps: sustained severe drop
+      s.consecutiveSlow += 1;
+      s.consecutiveFast = 0;
+      if (s.consecutiveSlow >= 2 && s.target > s.min) {
+        next = Math.max(s.min, Math.round((s.target - 0.1) * 10) / 10);
+        s.consecutiveSlow = 0;
+      }
+    } else if (avg <= 0.0185) {
+      // Running smoothly at ~55-60+ fps (healthy 60Hz headroom)
+      s.consecutiveFast += 1;
+      s.consecutiveSlow = 0;
+      if (s.consecutiveFast >= 2 && s.target < s.max) {
+        next = Math.min(s.max, Math.round((s.target + 0.1) * 10) / 10);
+        s.consecutiveFast = 0;
+      }
+    } else {
+      s.consecutiveSlow = 0;
+      s.consecutiveFast = 0;
     }
+
     if (next === s.target) return;
 
     s.target = next;
@@ -693,14 +716,18 @@ export class Engine {
     // is camera-relative, so floating-origin rebases need no extra handling).
     this.cloudSystem?.update(fd, nightFactor, this.camera.position);
 
-    // Perf: when sailing far from the harbour there is nothing to shadow, yet
-    // the whole harbour would otherwise be rendered into the shadow map every
-    // frame. Skip the sun's shadow pass entirely out at sea. The TimeSystem
-    // still toggles castShadow for the day/night cycle; we only additionally
-    // gate it on proximity to the harbour (distance to the rebased harbour).
-    if (this.sunLight && this.harbour) {
-      const nearHarbour = playerPos.distanceToSquared(this.harbour.root.position) < 550 * 550;
-      this.sunLight.castShadow = this.sunLight.castShadow && nearHarbour;
+    // Center sun lighting & shadow frustum around the player so shadows stay
+    // crisp on boats, character and docks without recompiling shaders per frame.
+    if (this.sunLight && this.sunLight.target) {
+      this.sunLight.target.position.set(playerPos.x, 0, playerPos.z);
+      const sunDir = this.timeSystem?._sunPos;
+      if (sunDir) {
+        this.sunLight.position.set(
+          playerPos.x + sunDir.x * 200,
+          Math.max(40, sunDir.y * 200),
+          playerPos.z + sunDir.z * 200
+        );
+      }
     }
 
     // Ocean reacts to the sky: point the water's sun specular at the sun (or
@@ -1249,6 +1276,9 @@ export class Engine {
     const h = this.container.clientHeight || window.innerHeight;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (this._resScale?.target) {
+      this.renderer.setPixelRatio(this._resScale.target);
+    }
     this.renderer.setSize(w, h);
   }
 
@@ -1310,6 +1340,11 @@ export class Engine {
    */
   _maybeRebase(playerPos) {
     if (!GameState.is('BOAT') || !this.boat) return;
+    // In multiplayer, all connected clients and the server share an absolute
+    // world origin at the harbor (0,0,0). Local floating origin shifts would
+    // offset remote players, boats and collision systems across the network.
+    // The 10km map maintains sub-millimeter float32 precision without shifting.
+    if (networkManager.isConnected()) return;
     const THRESHOLD = 384;
     const GRID = 128;
     const px = playerPos.x, pz = playerPos.z;

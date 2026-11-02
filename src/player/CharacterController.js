@@ -56,6 +56,9 @@ export class CharacterController {
     // ── Scratch vectors ─────────────────────────────────────────────
     this._inputDir   = new THREE.Vector3();
     this._desiredXZ  = new THREE.Vector3();
+    this._probeOrigin = new THREE.Vector3();
+    this._axisDir    = new THREE.Vector3();
+    this._groundOrigin = new THREE.Vector3();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -284,21 +287,18 @@ export class CharacterController {
 
     const radius = 0.45;
     const probes = [0.25, 0.7, 1.15]; // heights above the feet
-    const origin = new THREE.Vector3();
 
     const blockAxis = (axis) => {
       const vel = axis === 'x' ? this.velocity.x : this.velocity.z;
       if (Math.abs(vel) < 0.01) return;
 
       const sign = Math.sign(vel);
-      const dir = axis === 'x'
-        ? new THREE.Vector3(sign, 0, 0)
-        : new THREE.Vector3(0, 0, sign);
+      this._axisDir.set(axis === 'x' ? sign : 0, 0, axis === 'z' ? sign : 0);
       const travel = Math.abs(vel) * dt + radius;
 
       for (const h of probes) {
-        origin.set(this.position.x, this.position.y + h, this.position.z);
-        this._horizRay.set(origin, dir);
+        this._probeOrigin.set(this.position.x, this.position.y + h, this.position.z);
+        this._horizRay.set(this._probeOrigin, this._axisDir);
         const hits = this._horizRay.intersectObjects(this.wallColliders, false);
         if (hits.length > 0 && hits[0].distance < travel) {
           // Blocked — cancel movement along this axis so the body slides cleanly
@@ -325,12 +325,12 @@ export class CharacterController {
     this.isGrounded = false;
     if (!this.colliders || this.colliders.length === 0) return;
 
-    const origin = new THREE.Vector3(
+    this._groundOrigin.set(
       this.position.x,
       this.position.y + RAY_ORIGIN_OFFSET,
       this.position.z
     );
-    this._raycaster.set(origin, this._downDir);
+    this._raycaster.set(this._groundOrigin, this._downDir);
     const hits = this._raycaster.intersectObjects(this.colliders, false);
 
     if (hits.length > 0 && hits[0].distance <= RAY_SNAP_THRESHOLD && this.velocity.y <= 0) {

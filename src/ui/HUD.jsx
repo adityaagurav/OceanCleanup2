@@ -9,6 +9,7 @@ import {
   RecycleFactToast,
 } from './OceanFactsUI.jsx';
 import { MultiplayerStatusChip } from './MultiplayerStatusChip.jsx';
+import { InBoatLeaderboard } from './InBoatLeaderboard.jsx';
 
 /* ──────────────────────────────────────────────────────────────
    Small memoized building blocks — a pickup or speed change only
@@ -312,6 +313,9 @@ function HUD({
   onStopFishing,
   networkState,
   onReconnectMultiplayer,
+  isAdmin = false,
+  onOpenAdminPanel,
+  onOpenReportModal,
 }) {
   // Boat control hints: show for the first 15 s of each session, then fade.
   const [showHints, setShowHints] = useState(true);
@@ -354,7 +358,8 @@ function HUD({
     <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between">
       {/* ── Top row: system buttons (right) ── */}
       <div className="flex items-start justify-between p-4 md:p-5 gap-4">
-        <div className="w-24 shrink-0 hidden sm:block" aria-hidden="true" />
+        {/* Top left: in-boat recycling leaderboard while sailing */}
+        <InBoatLeaderboard inBoat={inBoat} networkState={networkState} />
 
         <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
           {/* Compass — always visible: the harbour waypoint keeps you oriented. */}
@@ -413,6 +418,36 @@ function HUD({
               <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-sand border-2 border-[#0a1f33] animate-pulse" />
             )}
           </div>
+
+          {/* Admin Panel button (shown only to authenticated admin) */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onOpenAdminPanel?.();
+              }}
+              title="Open Admin Console"
+              aria-label="Open Admin Console"
+              className="btn-ui focus-ring pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 md:px-3.5 md:py-2 rounded-xl bg-gradient-to-r from-amber-500/25 to-yellow-500/15 border border-amber-400/50 hover:border-amber-300 text-amber-200 text-xs md:text-sm font-extrabold tracking-wide shadow-[0_4px_16px_rgba(245,158,11,0.25)] hover:bg-amber-500/35 cursor-pointer transition-all"
+            >
+              <span aria-hidden="true">🛡️</span>
+              <span className="hidden sm:inline">Admin</span>
+            </button>
+          )}
+
+          {/* Report Player button (accessible to all connected players) */}
+          <IconButton
+            name="flag"
+            onClick={(e) => {
+              e?.preventDefault?.();
+              e?.stopPropagation?.();
+              onOpenReportModal?.();
+            }}
+            label="Report a Player"
+          />
+
           <IconButton
             name={soundMuted ? 'sound-off' : 'sound-on'}
             onClick={onToggleSound}
@@ -613,4 +648,4 @@ function HUD({
   );
 }
 
-export default HUD;
+export default memo(HUD);

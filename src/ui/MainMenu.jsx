@@ -74,12 +74,25 @@ function Hero({ onNavigate, soundMuted, onToggleSound, networkState, onReconnect
   const [customName, setCustomName] = React.useState(() => {
     return networkState?.username || networkState?.tempUsername || (typeof localStorage !== 'undefined' ? localStorage.getItem('ocean_cleanup_username') : '') || '';
   });
+  const [adminCode, setAdminCode] = React.useState('');
+  const [errorMessage, setErrorMessage] = React.useState('');
+  const [isJoining, setIsJoining] = React.useState(false);
+
+  const isAdminCallsign = customName.trim().toLowerCase() === 'admin';
 
   React.useEffect(() => {
     if (!customName && (networkState?.username || networkState?.tempUsername)) {
       setCustomName(networkState.username || networkState.tempUsername);
     }
   }, [networkState?.username, networkState?.tempUsername]);
+
+  // Clear admin code and error message when callsign changes
+  React.useEffect(() => {
+    setErrorMessage('');
+    if (!isAdminCallsign) {
+      setAdminCode('');
+    }
+  }, [customName, isAdminCallsign]);
 
   const handleRandomizeName = () => {
     const adjectives = ['Eco', 'Swift', 'Ocean', 'Tidal', 'Coral', 'Solar', 'Aqua', 'Wave', 'Brave', 'Clean'];
@@ -90,23 +103,49 @@ function Hero({ onNavigate, soundMuted, onToggleSound, networkState, onReconnect
     setCustomName(`${adj}${noun}${num}`);
   };
 
-  const handlePlay = () => {
+  const handlePlay = async () => {
+    if (isJoining) return;
+    setErrorMessage('');
+
     if (typeof document !== 'undefined' && document.activeElement?.blur) {
       document.activeElement.blur();
     }
     if (typeof window !== 'undefined' && window.focus) {
       window.focus();
     }
+
     const finalName = customName.trim() || networkState?.tempUsername || 'EcoSailor';
-    if (typeof localStorage !== 'undefined') {
+    const isTryingAdmin = finalName.toLowerCase() === 'admin';
+
+    if (isTryingAdmin && !adminCode.trim()) {
+      setErrorMessage('Admin Access Code is required to log in as administrator.');
+      return;
+    }
+
+    setIsJoining(true);
+    try {
+      if (onStartGame) {
+        const res = await onStartGame(finalName, isTryingAdmin ? adminCode.trim() : '');
+        if (res && res.success === false) {
+          setErrorMessage(res.message || res.error || 'Failed to join multiplayer.');
+          setIsJoining(false);
+          return;
+        }
+      } else {
+        onNavigate('GAME');
+      }
+    } catch (err) {
+      setErrorMessage(err.message || 'Error joining multiplayer session.');
+      setIsJoining(false);
+      return;
+    }
+
+    setIsJoining(false);
+
+    if (typeof localStorage !== 'undefined' && !isTryingAdmin) {
       try {
         localStorage.setItem('ocean_cleanup_username', finalName);
       } catch (e) {}
-    }
-    if (onStartGame) {
-      onStartGame(finalName);
-    } else {
-      onNavigate('GAME');
     }
   };
 
@@ -163,7 +202,9 @@ function Hero({ onNavigate, soundMuted, onToggleSound, networkState, onReconnect
               </button>
             </label>
             <div className="relative flex items-center">
-              <span className="absolute left-3.5 text-base pointer-events-none opacity-80">⛵</span>
+              <span className="absolute left-3.5 text-base pointer-events-none opacity-80">
+                {isAdminCallsign ? '🛡️' : '⛵'}
+              </span>
               <input
                 id="guest-callsign"
                 type="text"
@@ -172,21 +213,71 @@ function Hero({ onNavigate, soundMuted, onToggleSound, networkState, onReconnect
                 onChange={(e) => setCustomName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handlePlay()}
                 placeholder={networkState?.tempUsername || 'Enter call sign...'}
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-ink-deep/80 border border-cyan-soft/30 hover:border-cyan-soft/50 focus:border-aqua focus:outline-none focus:ring-2 focus:ring-aqua/30 text-foam placeholder-foam/30 text-sm font-semibold tracking-wide backdrop-blur-md transition-all shadow-inner"
+                className={`w-full pl-10 pr-4 py-2.5 rounded-xl bg-ink-deep/80 border text-foam placeholder-foam/30 text-sm font-semibold tracking-wide backdrop-blur-md transition-all shadow-inner ${
+                  isAdminCallsign
+                    ? 'border-amber-400/60 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30'
+                    : 'border-cyan-soft/30 hover:border-cyan-soft/50 focus:border-aqua focus:outline-none focus:ring-2 focus:ring-aqua/30'
+                }`}
               />
             </div>
+
+            {/* Requirement 2: Admin Access Code field shown when username is "admin" */}
+            {isAdminCallsign && (
+              <div className="mt-3 anim-pop">
+                <label
+                  htmlFor="admin-access-code"
+                  className="text-amber-300 text-xs font-bold tracking-wide flex items-center justify-between mb-1.5"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>🔐</span>
+                    <span>Admin Access Code</span>
+                  </span>
+                  <span className="text-[0.65rem] px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-400/40 uppercase font-mono font-bold tracking-widest">
+                    Server Verified
+                  </span>
+                </label>
+                <div className="relative flex items-center">
+                  <span className="absolute left-3.5 text-base pointer-events-none opacity-80">🔑</span>
+                  <input
+                    id="admin-access-code"
+                    type="password"
+                    value={adminCode}
+                    onChange={(e) => {
+                      setAdminCode(e.target.value);
+                      setErrorMessage('');
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && handlePlay()}
+                    placeholder="Enter admin code..."
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-ink-deep/95 border border-amber-400/50 hover:border-amber-400/80 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400/40 text-amber-100 placeholder-amber-200/30 text-sm font-semibold tracking-wide backdrop-blur-md transition-all shadow-inner"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Error display (e.g. Duplicate username, invalid admin code, reserved name) */}
+            {errorMessage && (
+              <div className="mt-3 px-3.5 py-2.5 rounded-xl bg-rose-500/20 border border-rose-400/50 text-rose-200 text-xs font-semibold flex items-start gap-2 anim-shake">
+                <span className="text-sm">⚠️</span>
+                <span>{errorMessage}</span>
+              </div>
+            )}
           </div>
 
           {/* CTA row */}
           <div className="anim-hero-rise anim-rise-3 mt-5 flex flex-wrap items-center gap-4">
             <button
               onClick={handlePlay}
-              className="btn-ui focus-ring group flex items-center gap-3 px-9 py-4 rounded-2xl bg-ocean hover:bg-[#1799dc] text-white text-xl font-extrabold tracking-wide border border-white/30 shadow-[0_18px_44px_-16px_rgba(15,134,196,1)] cursor-pointer"
+              disabled={isJoining}
+              className={`btn-ui focus-ring group flex items-center gap-3 px-9 py-4 rounded-2xl text-white text-xl font-extrabold tracking-wide border shadow-[0_18px_44px_-16px_rgba(15,134,196,1)] cursor-pointer transition-all ${
+                isAdminCallsign
+                  ? 'bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 hover:brightness-110 border-amber-300/40'
+                  : 'bg-ocean hover:bg-[#1799dc] border-white/30'
+              } ${isJoining ? 'opacity-70 cursor-wait' : ''}`}
             >
               <span className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center transition-transform duration-150 group-hover:scale-110">
-                <Icon name="play" size={18} />
+                <Icon name={isAdminCallsign ? 'shield' : 'play'} size={18} />
               </span>
-              PLAY NOW
+              {isJoining ? 'CONNECTING...' : isAdminCallsign ? 'ADMIN LOGIN' : 'PLAY NOW'}
             </button>
 
             <GameButton text="How to Play" icon="book" variant="secondary" size="auto"
