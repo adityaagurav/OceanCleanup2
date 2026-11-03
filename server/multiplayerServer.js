@@ -23,13 +23,13 @@ export const MAX_RECYCLE_KG = MAX_RECYCLE_ITEMS;
  * Visual color themes for distinct player boats.
  */
 export const COLOR_PALETTE = [
-  { name: 'Cyan Wave',   primary: '#06b6d4', sail: '#ecfeff', accent: '#0891b2' },
+  { name: 'Cyan Wave', primary: '#06b6d4', sail: '#ecfeff', accent: '#0891b2' },
   { name: 'Emerald Bay', primary: '#10b981', sail: '#ecfdf5', accent: '#059669' },
-  { name: 'Amber Reef',  primary: '#f59e0b', sail: '#fffbeb', accent: '#d97706' },
-  { name: 'Coral Rose',  primary: '#f43f5e', sail: '#fff1f2', accent: '#e11d48' },
+  { name: 'Amber Reef', primary: '#f59e0b', sail: '#fffbeb', accent: '#d97706' },
+  { name: 'Coral Rose', primary: '#f43f5e', sail: '#fff1f2', accent: '#e11d48' },
   { name: 'Violet Tide', primary: '#8b5cf6', sail: '#f5f3ff', accent: '#7c3aed' },
-  { name: 'Ocean Blue',  primary: '#3b82f6', sail: '#eff6ff', accent: '#2563eb' },
-  { name: 'Teal Coast',  primary: '#14b8a6', sail: '#f0fdf4', accent: '#0d9488' },
+  { name: 'Ocean Blue', primary: '#3b82f6', sail: '#eff6ff', accent: '#2563eb' },
+  { name: 'Teal Coast', primary: '#14b8a6', sail: '#f0fdf4', accent: '#0d9488' },
   { name: 'Sunset Glow', primary: '#f97316', sail: '#fff7ed', accent: '#ea580c' },
 ];
 
@@ -40,13 +40,13 @@ export const COLOR_PALETTE = [
  */
 export const HARBOR_BERTHS = [
   { x: -5.75, y: 0, z: 31, yaw: 0 },         // Berth 1: Opposite central head face (-x)
-  { x: 5.75,  y: 0, z: 23, yaw: 0 },         // Berth 2: Central pier east side (z: 23)
+  { x: 5.75, y: 0, z: 23, yaw: 0 },         // Berth 2: Central pier east side (z: 23)
   { x: -5.75, y: 0, z: 23, yaw: 0 },         // Berth 3: Central pier west side (z: 23)
-  { x: 5.75,  y: 0, z: 15, yaw: 0 },         // Berth 4: Central pier east side mid (z: 15)
+  { x: 5.75, y: 0, z: 15, yaw: 0 },         // Berth 4: Central pier east side mid (z: 15)
   { x: -5.75, y: 0, z: 15, yaw: 0 },         // Berth 5: Central pier west side mid (z: 15)
-  { x: 14.5,  y: 0, z: 25, yaw: 0 },         // Berth 6: Right arm inner face (x: 14.5, z: 25)
+  { x: 14.5, y: 0, z: 25, yaw: 0 },         // Berth 6: Right arm inner face (x: 14.5, z: 25)
   { x: -14.5, y: 0, z: 25, yaw: 0 },         // Berth 7: Left arm inner face (x: -14.5, z: 25)
-  { x: 14.5,  y: 0, z: 18, yaw: 0 },         // Berth 8: Right arm inner face mid (x: 14.5, z: 18)
+  { x: 14.5, y: 0, z: 18, yaw: 0 },         // Berth 8: Right arm inner face mid (x: 14.5, z: 18)
   { x: -14.5, y: 0, z: 18, yaw: 0 },         // Berth 9: Left arm inner face mid (x: -14.5, z: 18)
 ];
 
